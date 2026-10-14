@@ -156,6 +156,8 @@ Yee's strategy of security by designation applies directly: when the user picks 
 
 Do not request broad storage permissions. A file dropped on the app grants access to that file only.
 
+**Drag and drop.** A drop on a target is the user's choice of it, as a click is, and is checked as a click is: not synthetic, not obscured, and the target still for the stability delay. A drop that fails the checks may still be shown, but it authorizes nothing. Within one app, the dragged value is typed and checked by the target; from another app, it is content from elsewhere, like a paste.
+
 **Viewing versus opening.** Received files are never saved or opened automatically. Showing a file inside the app is separate from handing it to another program. Hand it over only on request, through the platform's own mechanism (the portal's OpenURI, an Android `ACTION_VIEW` intent), and never through a shell.
 
 **Links.** Follow a link only when the user activates it, only for an allowlisted scheme (`https`, perhaps `http` and `mailto`), and only through the platform's opener, never a shell.

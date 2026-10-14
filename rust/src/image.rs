@@ -43,9 +43,16 @@ pub fn within_limits(w: u32, h: u32) -> bool {
 /// The width, height and straight RGBA pixels of a PNG or JPEG. Its size is read from the header
 /// and checked against the limits before anything is allocated for its pixels.
 pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), ImageError> {
-    let reader = || image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(|_| ImageError::Format);
+    let reader = || {
+        image::ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .map_err(|_| ImageError::Format)
+    };
     let r = reader()?;
-    if !matches!(r.format(), Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)) {
+    if !matches!(
+        r.format(),
+        Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)
+    ) {
         return Err(ImageError::Format);
     }
     let (w, h) = r.into_dimensions().map_err(|_| ImageError::Corrupt)?;
@@ -106,7 +113,8 @@ mod tests {
     fn png(w: u32, h: u32) -> Vec<u8> {
         let mut out = Vec::new();
         let img = image::RgbaImage::from_pixel(w, h, image::Rgba([10, 20, 30, 255]));
-        img.write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+        img.write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
         out
     }
 

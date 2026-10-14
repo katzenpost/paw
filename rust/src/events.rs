@@ -238,16 +238,36 @@ fn access_node(r: &mut Reader) -> Option<AccessNode> {
     let name = r.string()?;
     let value = if r.bool()? { Some(r.string()?) } else { None };
     let checked = r.nat()?;
-    let range = if r.bool()? { Some((r.int()?, r.int()?, r.int()?)) } else { None };
+    let range = if r.bool()? {
+        Some((r.int()?, r.int()?, r.int()?))
+    } else {
+        None
+    };
     let focusable = r.bool()?;
     let disabled = r.bool()?;
-    let bounds = crate::scene::Rect { x0: r.int()?, y0: r.int()?, x1: r.int()?, y1: r.int()? };
+    let bounds = crate::scene::Rect {
+        x0: r.int()?,
+        y0: r.int()?,
+        x1: r.int()?,
+        y1: r.int()?,
+    };
     let n = r.count()?;
     let mut children = Vec::with_capacity(n);
     for _ in 0..n {
         children.push(r.nat()?);
     }
-    Some(AccessNode { id, role, name, value, checked, range, focusable, disabled, bounds, children })
+    Some(AccessNode {
+        id,
+        role,
+        name,
+        value,
+        checked,
+        range,
+        focusable,
+        disabled,
+        bounds,
+        children,
+    })
 }
 
 fn put_access_node(w: &mut Writer, n: &AccessNode) {
@@ -303,7 +323,12 @@ impl Request {
                 _ => return None,
             },
             7 => Request::Ime(if r.bool()? {
-                Some(crate::scene::Rect { x0: r.int()?, y0: r.int()?, x1: r.int()?, y1: r.int()? })
+                Some(crate::scene::Rect {
+                    x0: r.int()?,
+                    y0: r.int()?,
+                    x1: r.int()?,
+                    y1: r.int()?,
+                })
             } else {
                 None
             }),
@@ -362,18 +387,52 @@ impl Request {
 
 /// A fixed set of events, one of each kind, for testing that Lean decodes what Rust encodes.
 pub fn sample() -> Vec<WindowEvent> {
-    let input = |kind, time| WindowEvent::Input(Input { kind, time, synthetic: false, obscured: false });
+    let input = |kind, time| {
+        WindowEvent::Input(Input {
+            kind,
+            time,
+            synthetic: false,
+            obscured: false,
+        })
+    };
     vec![
         input(InputKind::Press(640, -64, Button::Primary), 1),
         input(InputKind::Release(640, 64, Button::Secondary), 2),
         input(InputKind::Move(1, 2), 3),
         input(InputKind::Wheel(0, 0, -1, 2), 4),
-        input(InputKind::Key(Key::Char('é'), Mods { ctrl: true, ..Mods::default() }, true), 5),
+        input(
+            InputKind::Key(
+                Key::Char('é'),
+                Mods {
+                    ctrl: true,
+                    ..Mods::default()
+                },
+                true,
+            ),
+            5,
+        ),
         input(InputKind::Key(Key::F(12), Mods::default(), false), 6),
-        input(InputKind::Key(Key::PageDown, Mods { shift: true, alt: true, sup: true, ctrl: false }, true), 7),
+        input(
+            InputKind::Key(
+                Key::PageDown,
+                Mods {
+                    shift: true,
+                    alt: true,
+                    sup: true,
+                    ctrl: false,
+                },
+                true,
+            ),
+            7,
+        ),
         input(InputKind::Text("hé 🚀".into()), 8),
         input(InputKind::Paste("a\nb".into()), 9),
-        WindowEvent::Input(Input { kind: InputKind::LeaveWindow, time: 10, synthetic: true, obscured: true }),
+        WindowEvent::Input(Input {
+            kind: InputKind::LeaveWindow,
+            time: 10,
+            synthetic: true,
+            obscured: true,
+        }),
         WindowEvent::Resize(64000, 48000),
         WindowEvent::Close,
         WindowEvent::Access(7, 1),
@@ -397,7 +456,12 @@ mod tests {
             Request::Quit,
             Request::Cursor(2),
             Request::Ime(None),
-            Request::Ime(Some(crate::scene::Rect { x0: 1, y0: -2, x1: 3, y1: 4 })),
+            Request::Ime(Some(crate::scene::Rect {
+                x0: 1,
+                y0: -2,
+                x1: 3,
+                y1: 4,
+            })),
             Request::Access(
                 2,
                 vec![AccessNode {
@@ -409,7 +473,12 @@ mod tests {
                     range: Some((0, 10, 3)),
                     focusable: true,
                     disabled: false,
-                    bounds: crate::scene::Rect { x0: 0, y0: 0, x1: 640, y1: 640 },
+                    bounds: crate::scene::Rect {
+                        x0: 0,
+                        y0: 0,
+                        x1: 640,
+                        y1: 640,
+                    },
                     children: vec![],
                 }],
             ),
@@ -424,7 +493,10 @@ mod tests {
     fn events_encode() {
         let bytes = encode_events(&sample());
         assert_eq!(bytes[0], 16);
-        assert_eq!(encode_events(&[WindowEvent::Focus(false), WindowEvent::Visible(true)]), [2, 4, 0, 5, 1]);
+        assert_eq!(
+            encode_events(&[WindowEvent::Focus(false), WindowEvent::Visible(true)]),
+            [2, 4, 0, 5, 1]
+        );
         assert_eq!(encode_events(&[WindowEvent::Close]), [1, 2]);
         assert_eq!(encode_events(&[WindowEvent::Resize(1, -1)]), [1, 1, 2, 1]);
     }

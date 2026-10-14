@@ -29,7 +29,10 @@ impl Text {
         }
         db.set_sans_serif_family("DejaVu Sans");
         let fs = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
-        Text { fs, cache: SwashCache::new() }
+        Text {
+            fs,
+            cache: SwashCache::new(),
+        }
     }
 
     /// Adds the system's fonts, for characters the bundled fonts lack.
@@ -56,16 +59,29 @@ impl Text {
     }
 
     /// Calls `f(x, y, alpha)` for each pixel of the line drawn with its top left at `(x, y)`.
-    pub fn draw<F: FnMut(i32, i32, u8)>(&mut self, s: &str, size: f32, bold: bool, x: f32, y: f32, mut f: F) {
+    pub fn draw<F: FnMut(i32, i32, u8)>(
+        &mut self,
+        s: &str,
+        size: f32,
+        bold: bool,
+        x: f32,
+        y: f32,
+        mut f: F,
+    ) {
         let b = self.buffer(s, size, bold);
         let (ox, oy) = (x.round() as i32, y.round() as i32);
-        b.draw(&mut self.fs, &mut self.cache, cosmic_text::Color::rgba(0, 0, 0, 255), |px, py, w, h, c| {
-            for dy in 0..h as i32 {
-                for dx in 0..w as i32 {
-                    f(ox + px + dx, oy + py + dy, c.a());
+        b.draw(
+            &mut self.fs,
+            &mut self.cache,
+            cosmic_text::Color::rgba(0, 0, 0, 255),
+            |px, py, w, h, c| {
+                for dy in 0..h as i32 {
+                    for dx in 0..w as i32 {
+                        f(ox + px + dx, oy + py + dy, c.a());
+                    }
                 }
-            }
-        });
+            },
+        );
     }
 }
 

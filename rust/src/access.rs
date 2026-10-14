@@ -45,7 +45,11 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
         .iter()
         .map(|n| {
             let mut node = Node::new(role(n.role));
-            let name = if n.name.is_empty() && n.role == 6 { title } else { &n.name };
+            let name = if n.name.is_empty() && n.role == 6 {
+                title
+            } else {
+                &n.name
+            };
             // AccessKit reads a label's text from its value; other roles are named by their label.
             if n.role == 0 {
                 node.set_value(name);
@@ -71,7 +75,12 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
                 node.add_action(Action::Increment);
                 node.add_action(Action::Decrement);
             }
-            node.set_bounds(Rect { x0: px(n.bounds.x0), y0: px(n.bounds.y0), x1: px(n.bounds.x1), y1: px(n.bounds.y1) });
+            node.set_bounds(Rect {
+                x0: px(n.bounds.x0),
+                y0: px(n.bounds.y0),
+                x1: px(n.bounds.x1),
+                y1: px(n.bounds.y1),
+            });
             node.set_children(n.children.iter().map(|c| NodeId(*c)).collect::<Vec<_>>());
             if n.focusable {
                 node.add_action(Action::Focus);
@@ -90,8 +99,16 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
         })
         .collect();
     let root = nodes.first().map(|n| n.id).unwrap_or(0);
-    let focus = if nodes.iter().any(|n| n.id == focus) { focus } else { root };
-    TreeUpdate { nodes: built, tree: Some(Tree::new(NodeId(root))), focus: NodeId(focus) }
+    let focus = if nodes.iter().any(|n| n.id == focus) {
+        focus
+    } else {
+        root
+    };
+    TreeUpdate {
+        nodes: built,
+        tree: Some(Tree::new(NodeId(root))),
+        focus: NodeId(focus),
+    }
 }
 
 /// An update with only the window, for when assistive technology asks before Lean has sent one.
@@ -105,7 +122,12 @@ pub fn empty(title: &str) -> TreeUpdate {
         range: None,
         focusable: false,
         disabled: false,
-        bounds: crate::scene::Rect { x0: 0, y0: 0, x1: 0, y1: 0 },
+        bounds: crate::scene::Rect {
+            x0: 0,
+            y0: 0,
+            x1: 0,
+            y1: 0,
+        },
         children: vec![],
     };
     update(0, &[window], 1.0, title)
@@ -125,7 +147,12 @@ mod tests {
             range: None,
             focusable: role != 6,
             disabled: false,
-            bounds: crate::scene::Rect { x0: 0, y0: 0, x1: 6400, y1: 1280 },
+            bounds: crate::scene::Rect {
+                x0: 0,
+                y0: 0,
+                x1: 6400,
+                y1: 1280,
+            },
             children,
         }
     }
@@ -147,13 +174,33 @@ mod tests {
         assert_eq!(find(2).role(), Role::Button);
         assert!(find(2).supports_action(Action::Click));
         assert_eq!(find(3).value(), Some("Ada"));
-        assert_eq!(find(4).value(), None, "a password's value is never passed on");
+        assert_eq!(
+            find(4).value(),
+            None,
+            "a password's value is never passed on"
+        );
         assert_eq!(find(2).bounds().map(|b| b.x1), Some(200.0));
         assert_eq!(find(0).children(), &[NodeId(2), NodeId(3), NodeId(4)]);
-        let label = update(0, &[node(0, 6, "", None, vec![5]), node(5, 0, "count: 1", None, vec![])], 1.0, "t");
+        let label = update(
+            0,
+            &[
+                node(0, 6, "", None, vec![5]),
+                node(5, 0, "count: 1", None, vec![]),
+            ],
+            1.0,
+            "t",
+        );
         let l = &label.nodes.iter().find(|(n, _)| *n == NodeId(5)).unwrap().1;
         assert_eq!(l.value(), Some("count: 1"), "a label's text is its value");
-        let dlg = update(0, &[node(0, 6, "", None, vec![6]), node(6, 7, "Clear the list?", None, vec![])], 1.0, "t");
+        let dlg = update(
+            0,
+            &[
+                node(0, 6, "", None, vec![6]),
+                node(6, 7, "Clear the list?", None, vec![]),
+            ],
+            1.0,
+            "t",
+        );
         let d = &dlg.nodes.iter().find(|(n, _)| *n == NodeId(6)).unwrap().1;
         assert_eq!(d.role(), Role::Dialog);
         assert!(d.is_modal(), "a dialog is modal");
@@ -162,7 +209,10 @@ mod tests {
 
     #[test]
     fn unknown_focus_falls_back_to_the_window() {
-        assert_eq!(update(99, &[node(0, 6, "", None, vec![])], 1.0, "t").focus, NodeId(0));
+        assert_eq!(
+            update(99, &[node(0, 6, "", None, vec![])], 1.0, "t").focus,
+            NodeId(0)
+        );
         assert_eq!(empty("t").nodes.len(), 1);
     }
 }

@@ -91,23 +91,37 @@ fn key_of(k: &WKey) -> Option<Key> {
 
 impl App {
     fn scale(&self) -> f64 {
-        self.window.as_ref().map(|w| w.scale_factor()).unwrap_or(1.0)
+        self.window
+            .as_ref()
+            .map(|w| w.scale_factor())
+            .unwrap_or(1.0)
     }
 
     fn input(&mut self, kind: InputKind) {
-        self.events.push(WindowEvent::Input(Input { kind, time: now(), synthetic: false, obscured: false }));
+        self.events.push(WindowEvent::Input(Input {
+            kind,
+            time: now(),
+            synthetic: false,
+            obscured: false,
+        }));
     }
 
     fn present(&mut self) {
-        let (Some(window), Some(surface)) = (self.window.as_ref(), self.surface.as_mut()) else { return };
+        let (Some(window), Some(surface)) = (self.window.as_ref(), self.surface.as_mut()) else {
+            return;
+        };
         let size = window.inner_size();
-        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else { return };
+        let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
+            return;
+        };
         let scale = window.scale_factor() as f32;
         let pm = with_text(|t| render(&self.scene, w.get(), h.get(), scale, t));
         if surface.resize(w, h).is_err() {
             return;
         }
-        let Ok(mut buf) = surface.buffer_mut() else { return };
+        let Ok(mut buf) = surface.buffer_mut() else {
+            return;
+        };
         for (dst, p) in buf.iter_mut().zip(pm.pixels()) {
             *dst = ((p.red() as u32) << 16) | ((p.green() as u32) << 8) | p.blue() as u32;
         }
@@ -125,8 +139,14 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
             .with_title(self.title.clone())
             .with_inner_size(LogicalSize::new(self.size.0, self.size.1))
             .with_visible(false);
-        let Ok(window) = el.create_window(attrs) else { return };
-        self.adapter = Some(accesskit_winit::Adapter::with_event_loop_proxy(el, &window, self.proxy.clone()));
+        let Ok(window) = el.create_window(attrs) else {
+            return;
+        };
+        self.adapter = Some(accesskit_winit::Adapter::with_event_loop_proxy(
+            el,
+            &window,
+            self.proxy.clone(),
+        ));
         window.set_visible(true);
         let window = Rc::new(window);
         if let Ok(ctx) = softbuffer::Context::new(window.clone()) {
@@ -134,7 +154,10 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
         }
         let s = window.inner_size();
         let scale = window.scale_factor();
-        self.events.push(WindowEvent::Resize(units(s.width as f64, scale), units(s.height as f64, scale)));
+        self.events.push(WindowEvent::Resize(
+            units(s.width as f64, scale),
+            units(s.height as f64, scale),
+        ));
         self.window = Some(window);
     }
 
@@ -142,7 +165,10 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
         use accesskit_winit::WindowEvent as Ak;
         match event.window_event {
             Ak::InitialTreeRequested => {
-                let tree = self.access.clone().unwrap_or_else(|| crate::access::empty(&self.title));
+                let tree = self
+                    .access
+                    .clone()
+                    .unwrap_or_else(|| crate::access::empty(&self.title));
                 if let Some(a) = self.adapter.as_mut() {
                     a.update_if_active(|| tree);
                 }
@@ -168,14 +194,17 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
         let scale = self.scale();
         match event {
             WE::CloseRequested => self.events.push(WindowEvent::Close),
-            WE::Resized(s) => {
-                self.events.push(WindowEvent::Resize(units(s.width as f64, scale), units(s.height as f64, scale)))
-            }
+            WE::Resized(s) => self.events.push(WindowEvent::Resize(
+                units(s.width as f64, scale),
+                units(s.height as f64, scale),
+            )),
             WE::RedrawRequested => self.present(),
             WE::Focused(f) => self.events.push(WindowEvent::Focus(f)),
             WE::Ime(ime) => match ime {
                 winit::event::Ime::Preedit(s, cursor) => {
-                    let c = cursor.map(|(a, _)| s[..a.min(s.len())].chars().count()).unwrap_or(s.chars().count());
+                    let c = cursor
+                        .map(|(a, _)| s[..a.min(s.len())].chars().count())
+                        .unwrap_or(s.chars().count());
                     self.input(InputKind::Preedit(s, c as u64));
                 }
                 winit::event::Ime::Commit(s) => self.input(InputKind::Text(s)),
@@ -185,7 +214,12 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
             WE::Occluded(o) => self.events.push(WindowEvent::Visible(!o)),
             WE::ModifiersChanged(m) => {
                 let s = m.state();
-                self.mods = Mods { shift: s.shift_key(), ctrl: s.control_key(), alt: s.alt_key(), sup: s.super_key() };
+                self.mods = Mods {
+                    shift: s.shift_key(),
+                    ctrl: s.control_key(),
+                    alt: s.alt_key(),
+                    sup: s.super_key(),
+                };
             }
             WE::CursorMoved { position, .. } => {
                 self.cursor = (units(position.x, scale), units(position.y, scale));
@@ -208,23 +242,35 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
             WE::MouseWheel { delta, .. } => {
                 let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => (-x.round() as i64, -y.round() as i64),
-                    MouseScrollDelta::PixelDelta(p) => (-(p.x / 40.0).round() as i64, -(p.y / 40.0).round() as i64),
+                    MouseScrollDelta::PixelDelta(p) => {
+                        (-(p.x / 40.0).round() as i64, -(p.y / 40.0).round() as i64)
+                    }
                 };
                 if dx != 0 || dy != 0 {
                     let (x, y) = self.cursor;
                     self.input(InputKind::Wheel(x, y, dx, dy));
                 }
             }
-            WE::KeyboardInput { event, is_synthetic, .. } => {
+            WE::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => {
                 // Keys winit reports as held when focus arrives were not pressed in this window.
                 if is_synthetic {
                     return;
                 }
                 let pressed = event.state == ElementState::Pressed;
                 let m = self.mods;
-                let Some(k) = key_of(&event.logical_key) else { return };
+                let Some(k) = key_of(&event.logical_key) else {
+                    return;
+                };
                 if pressed && m.ctrl && !m.alt && k == Key::Char('v') {
-                    let text = self.clipboard.as_mut().and_then(|c| c.get_text().ok()).unwrap_or_default();
+                    let text = self
+                        .clipboard
+                        .as_mut()
+                        .and_then(|c| c.get_text().ok())
+                        .unwrap_or_default();
                     self.input(InputKind::Paste(text));
                     return;
                 }
@@ -279,8 +325,11 @@ pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
     LOOP.with(|l| {
         APP.with(|a| {
             let (mut l, mut a) = (l.borrow_mut(), a.borrow_mut());
-            let (Some(el), Some(app)) = (l.as_mut(), a.as_mut()) else { return vec![WindowEvent::Close] };
-            let timeout = (timeout_ms != u32::MAX).then(|| Duration::from_millis(timeout_ms as u64));
+            let (Some(el), Some(app)) = (l.as_mut(), a.as_mut()) else {
+                return vec![WindowEvent::Close];
+            };
+            let timeout =
+                (timeout_ms != u32::MAX).then(|| Duration::from_millis(timeout_ms as u64));
             let status = el.pump_app_events(timeout, app);
             // The loop exits when the display connection is lost; the window is gone with it.
             if let PumpStatus::Exit(_) = status {
@@ -321,7 +370,11 @@ pub fn request(r: Request) {
                 let _ = std::process::Command::new("xdg-open").arg(u).spawn();
             }
             Request::Notify(title, body) => {
-                let _ = std::process::Command::new("notify-send").arg("--").arg(title).arg(body).spawn();
+                let _ = std::process::Command::new("notify-send")
+                    .arg("--")
+                    .arg(title)
+                    .arg(body)
+                    .spawn();
             }
             Request::Quit => {
                 app.adapter = None;
@@ -336,7 +389,10 @@ pub fn request(r: Request) {
                         let p = |u: i64| u as f64 / crate::render::UNITS as f64 * s;
                         w.set_ime_cursor_area(
                             winit::dpi::PhysicalPosition::new(p(r.x0), p(r.y0)),
-                            winit::dpi::PhysicalSize::new(p(r.x1 - r.x0).max(1.0), p(r.y1 - r.y0).max(1.0)),
+                            winit::dpi::PhysicalSize::new(
+                                p(r.x1 - r.x0).max(1.0),
+                                p(r.y1 - r.y0).max(1.0),
+                            ),
                         );
                     }
                 }
@@ -376,7 +432,10 @@ pub fn size() -> (i64, i64) {
                 let scale = w.scale_factor();
                 (units(s.width as f64, scale), units(s.height as f64, scale))
             }
-            None => ((app.size.0 as i64) * UNITS as i64, (app.size.1 as i64) * UNITS as i64),
+            None => (
+                (app.size.0 as i64) * UNITS as i64,
+                (app.size.1 as i64) * UNITS as i64,
+            ),
         }
     })
 }

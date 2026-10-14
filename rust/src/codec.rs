@@ -45,7 +45,11 @@ impl<'a> Reader<'a> {
 
     pub fn int(&mut self) -> Option<i64> {
         let z = self.nat()?;
-        Some(if z % 2 == 0 { (z / 2) as i64 } else { -(z.div_ceil(2) as i64) })
+        Some(if z % 2 == 0 {
+            (z / 2) as i64
+        } else {
+            -(z.div_ceil(2) as i64)
+        })
     }
 
     pub fn bool(&mut self) -> Option<bool> {
@@ -91,7 +95,11 @@ impl Writer {
     }
 
     pub fn int(&mut self, i: i64) {
-        self.nat(if i >= 0 { 2 * i as u64 } else { 2 * i.unsigned_abs() - 1 });
+        self.nat(if i >= 0 {
+            2 * i as u64
+        } else {
+            2 * i.unsigned_abs() - 1
+        });
     }
 
     pub fn bool(&mut self, b: bool) {
@@ -140,7 +148,18 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        for i in [0, 1, -1, 63, -64, 64, i64::MAX, i64::MIN + 1, 123456789, -987654321] {
+        for i in [
+            0,
+            1,
+            -1,
+            63,
+            -64,
+            64,
+            i64::MAX,
+            i64::MIN + 1,
+            123456789,
+            -987654321,
+        ] {
             assert_eq!(Reader::new(&int(i)).int(), Some(i));
         }
         for n in [0, 1, 127, 128, u64::MAX] {
@@ -156,7 +175,10 @@ mod tests {
         assert_eq!(Reader::new(&[]).nat(), None);
         assert_eq!(Reader::new(&[0x80]).nat(), None);
         assert_eq!(Reader::new(&[0xFF; 11]).nat(), None);
-        assert_eq!(Reader::new(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02]).nat(), None);
+        assert_eq!(
+            Reader::new(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02]).nat(),
+            None
+        );
         assert_eq!(Reader::new(&[2]).bool(), None);
         assert_eq!(Reader::new(&[1, 0x80, 0xB0, 0x03]).string(), None); // a surrogate
         assert_eq!(Reader::new(&[5, 1]).count(), None);

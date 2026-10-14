@@ -28,6 +28,7 @@ coverage:
 	lake exe paw-coverage
 
 check:
+	cd rust && cargo fmt --check
 	cd rust && cargo clippy --quiet -- -D warnings
 
 goldens:

@@ -7,8 +7,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-pub mod codec;
 pub mod access;
+pub mod codec;
 pub mod events;
 pub mod image;
 pub mod render;
@@ -50,21 +50,28 @@ unsafe fn io_ok(v: lean_obj_res) -> lean_obj_res {
 }
 
 unsafe fn io_err(msg: &str) -> lean_obj_res {
-    lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string_from_bytes(msg.as_ptr(), msg.len())))
+    lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string_from_bytes(
+        msg.as_ptr(),
+        msg.len(),
+    )))
 }
 
 /// Decodes a scene and encodes it again; empty if it does not decode. For tests that Lean and
 /// Rust agree on the format.
 #[no_mangle]
 pub unsafe extern "C" fn paw_scene_echo(a: b_lean_obj_arg) -> lean_obj_res {
-    let out = scene::Scene::decode(bytes_of(a)).map(|s| s.encode()).unwrap_or_default();
+    let out = scene::Scene::decode(bytes_of(a))
+        .map(|s| s.encode())
+        .unwrap_or_default();
     byte_array(&out)
 }
 
 /// Decodes a request and encodes it again; empty if it does not decode.
 #[no_mangle]
 pub unsafe extern "C" fn paw_request_echo(a: b_lean_obj_arg) -> lean_obj_res {
-    let out = events::Request::decode(bytes_of(a)).map(|r| r.encode()).unwrap_or_default();
+    let out = events::Request::decode(bytes_of(a))
+        .map(|r| r.encode())
+        .unwrap_or_default();
     byte_array(&out)
 }
 
@@ -92,8 +99,15 @@ pub unsafe extern "C" fn paw_measure(a: b_lean_obj_arg) -> lean_obj_res {
 /// A scene drawn offscreen at `scale_milli`/1000 physical pixels per logical pixel, as PNG;
 /// empty if it does not decode.
 #[no_mangle]
-pub unsafe extern "C" fn paw_render_png(a: b_lean_obj_arg, w: u32, h: u32, scale_milli: u32) -> lean_obj_res {
-    let Some(s) = scene::Scene::decode(bytes_of(a)) else { return byte_array(&[]) };
+pub unsafe extern "C" fn paw_render_png(
+    a: b_lean_obj_arg,
+    w: u32,
+    h: u32,
+    scale_milli: u32,
+) -> lean_obj_res {
+    let Some(s) = scene::Scene::decode(bytes_of(a)) else {
+        return byte_array(&[]);
+    };
     let png = text::with_text(|t| render::render(&s, w, h, scale_milli as f32 / 1000.0, t))
         .encode_png()
         .unwrap_or_default();
@@ -138,7 +152,9 @@ pub unsafe extern "C" fn paw_window_open(title: b_lean_obj_arg, w: u32, h: u32) 
 
 #[no_mangle]
 pub unsafe extern "C" fn paw_window_poll(timeout_ms: u32) -> lean_obj_res {
-    io_ok(byte_array(&events::encode_events(&window::poll(timeout_ms))))
+    io_ok(byte_array(&events::encode_events(&window::poll(
+        timeout_ms,
+    ))))
 }
 
 #[no_mangle]
@@ -189,8 +205,9 @@ fn image_class() -> *mut lean_external_class {
         image::release(*Box::from_raw(p as *mut u64));
     }
     unsafe extern "C" fn foreach(_: *mut std::ffi::c_void, _: b_lean_obj_arg) {}
-    *CLASS.get_or_init(|| unsafe { lean_register_external_class(Some(finalize), Some(foreach)) as usize })
-        as *mut lean_external_class
+    *CLASS.get_or_init(|| unsafe {
+        lean_register_external_class(Some(finalize), Some(foreach)) as usize
+    }) as *mut lean_external_class
 }
 
 /// The outcome of making an image, as Lean reads it: a header, either the error's tag or 0 and
@@ -220,12 +237,20 @@ unsafe fn image_result(r: Result<(u32, u32, u64), image::ImageError>) -> lean_ob
 /// Decodes a PNG or JPEG and keeps its pixels for drawing.
 #[no_mangle]
 pub unsafe extern "C" fn paw_image_decode(a: b_lean_obj_arg, _world: lean_obj_arg) -> lean_obj_res {
-    image_result(image::decode(bytes_of(a)).and_then(|(w, h, px)| image::register(w, h, &px).map(|id| (w, h, id))))
+    image_result(
+        image::decode(bytes_of(a))
+            .and_then(|(w, h, px)| image::register(w, h, &px).map(|id| (w, h, id))),
+    )
 }
 
 /// Keeps straight RGBA pixels of a `w` × `h` image for drawing.
 #[no_mangle]
-pub unsafe extern "C" fn paw_image_of_rgba(w: u32, h: u32, a: b_lean_obj_arg, _world: lean_obj_arg) -> lean_obj_res {
+pub unsafe extern "C" fn paw_image_of_rgba(
+    w: u32,
+    h: u32,
+    a: b_lean_obj_arg,
+    _world: lean_obj_arg,
+) -> lean_obj_res {
     image_result(image::register(w, h, bytes_of(a)).map(|id| (w, h, id)))
 }
 

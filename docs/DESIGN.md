@@ -97,6 +97,8 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | `Typeable` and `cast` for widget state and messages | Typed messages mapped between components; widget state through `Dynamic`, compared only after widget types match | Lean's types replace runtime casts where possible |
 | Lenses into the parent model | A `Field σ α` structure with get and set and the lens laws as fields | Same pattern as the other laws |
 | SDL2 and NanoVG through OpenGL | The Rust layer above | Wayland, Android and accessibility support |
+| A stack that lacks room places children past its box, for the parent to fix | Children are cut at the box's edge | `assign_within` holds for every layout; a scroll is how content larger than its box is shown |
+| Shrinking flexible sizes in one pass, clamped at zero, so a child weighted to give up more than it has leaves the rest overflowing | Shrinking in rounds: what one child cannot give, the others give next round | Children fit whenever their rigid sizes do; a random test checks it |
 
 ## Laws in types
 
@@ -212,6 +214,8 @@ The full `Widget` record also has monomer's merge, event, message and dispose fu
 | `Widget` | `focus_valid`: focus moves only to visible, enabled, focusable widgets | Focus is the user's |
 | `Merge` | `merge_types`: merge pairs only widgets of the same type, and keys only with equal keys | State is never handed to another widget |
 | `Field σ α` | `get_set`, `set_get`, `set_set` | Updates through a field change only that field |
+
+Stacks and grids prove `assign_disjoint` once, between them. Each is an `Axial` layout that only decides a size per child along its axis. `Axial.toSeparated` places those sizes one after another and proves all three laws from a lemma about the placement. A new layout along one axis gets the laws by supplying its size function and a proof that it returns one size per child.
 
 Overlap is sometimes wanted, as in a z-stack or a popup. Those layouts do not carry `assign_disjoint`. A container that needs reserved regions accepts only layouts that do, which is a type constraint on the container.
 

@@ -9,6 +9,7 @@ import Paw.Tests.Text
 import Paw.Tests.Secret
 import Paw.Tests.Codec
 import Paw.Tests.Scene
+import Paw.Tests.Layout
 
 open Paw.Tests
 
@@ -19,5 +20,6 @@ def main : IO UInt32 := do
     ("text", Text.tests),
     ("secret", Secret.tests),
     ("codec", Codec.tests),
-    ("scene", Scene.tests)].mapM fun (n, t) => runSuite n t
+    ("scene", Scene.tests),
+    ("layout", Layout.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

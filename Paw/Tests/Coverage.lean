@@ -42,7 +42,7 @@ def handWritten (env : Environment) (n : Name) : Bool :=
     c.startsWith "match_" || c.startsWith "proof_" || c == "splitter"
   !generated && !user.isInternalDetail && !user.hasMacroScopes && !isAuxRecursor env n && !isNoConfusion env n
     && !(env.isProjectionFn n) && !routineInstance env n
-    && !(n.getString! == "ctorIdx" || n.getString! == "noConfusionType")
+    && !["ctorIdx", "noConfusionType", "ctorElimType", "toCtorIdx", "ofNat"].contains n.getString!
     && !(Meta.Match.Extension.getMatcherInfo? env n).isSome
 
 def candidates (env : Environment) : Array Name :=

@@ -67,6 +67,18 @@ else
   echo "skip copy reaches the clipboard (no wl-paste)"
 fi
 
+# The menu opens a confirmation, which only real input can. Nothing beneath it can be reached, and
+# Escape takes the safe choice.
+click more
+sleep 0.6
+click clear
+expect "dialog=true" "the menu opens a confirmation"
+click inc
+expect_still "count=2 .*dialog=true" "a click beneath the dialog reaches nothing"
+wtype -s 200 -k Escape
+expect "dialog=false" "Escape cancels the confirmation"
+expect "plums" "and the list is kept"
+
 wtype -s 200 -M ctrl q -m ctrl
 expect_exit "ctrl-q quits"
 finish

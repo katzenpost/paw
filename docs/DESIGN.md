@@ -84,7 +84,7 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | Identity | `Path` (child indices), `WidgetKey` (user text), `WidgetId` (creation time and path), with a runtime table from id to current path | `Path` as in monomer; a `WidgetId` is a number given when a node joins the tree and kept through merges |
 | Layout | `SizeReq {fixed, flex, extra, factor}` per axis; `assignStackAreas` gives fixed sizes, shrinks flex in proportion, then shares extra space by factor (`Widgets/Containers/Stack.hs`) | The same algorithm over integers, with its laws proved |
 | Event routing | Keys, text and clipboard go to the focused path; press, move and wheel go to the widget under the point; overlays become the root for hit-testing; a `Click` needs press and release on the same widget (`Main/Handlers.hs`) | The same, plus the checks from the security guidelines before a designation is made |
-| Rendering | Only on request: input, `RenderOnce`, `RenderEvery`; overlays drawn after the main pass | The same; the Scene is sent to Rust only when a render is needed |
+| Rendering | Only on request: input, `RenderOnce`, `RenderEvery`; overlays drawn after the main pass | The same; the Scene is sent to Rust only when a render is needed, with overlays after the tree |
 | Tasks and producers | `Task (IO e)` for one result, `Producer` for a stream, both delivered to the widget that started them | The same, delivered with origin `result` and checked against the current tree |
 
 ## What Paw changes
@@ -105,6 +105,8 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | A stack that lacks room places children past its box, for the parent to fix | Children are cut at the box's edge | `assign_within` holds for every layout; a scroll is how content larger than its box is shown |
 | A scroll places its child past its own box | The child is laid out in a content rectangle the scroll names, and drawn clipped to the scroll's box | `assign_within` holds relative to the content rectangle; the clip law is unchanged |
 | Shrinking flexible sizes in one pass, clamped at zero, so a child weighted to give up more than it has leaves the rest overflowing | Shrinking in rounds: what one child cannot give, the others give next round | Children fit whenever their rigid sizes do; a random test checks it |
+| A widget opens an overlay with the `SetOverlay` request and closes it with `ResetOverlay` | An overlay is a node of the view, marked with `Node.overlay`; it is open while the view has it | One direction for data to flow: the model says what is open |
+| `alert` and `confirm` can be opened by any message, and their accept button acts on any click | A modal opens only with a `Modal` token made from the designation of the input being handled; `confirm`'s accept button acts only on a designated click | Dialogs come only from the user's actions, and ignore input until they are stable (guidelines, Input) |
 
 ## Laws in types
 
@@ -216,6 +218,8 @@ The full `Widget` record also has monomer's merge, event and dispose functions. 
 | `Layout` for stack and grid | `assign_disjoint`: children's boxes do not overlap | Reserved regions cannot be covered by a sibling |
 | `Node` | `hit_spec`: hit-testing returns only a visible node whose box contains the point; of overlapping siblings, the later, which is drawn on top | The user clicks what they see |
 | `Router` | `nextFocus_mem`: focus moves only to a widget in the focus order, which holds only visible, enabled, focusable widgets | Focus is the user's |
+| `Router` | `overlay_hit`: while an overlay is open, the pointer reaches only widgets in it; `press_outside`: a press outside it reaches nothing else | The user clicks what they see; a popup cannot steer a click to what it covers |
+| `Node` | `overlays_within`: overlays draw within the window; `Overlay.place_within` | Content cannot set its own position |
 | `Node` | keys unique among siblings, by `dedupKeys_nodup` | State is never handed to another widget |
 
 Widgets draw with `Scene.inBox v ds`, every item clipped to the box `v`, and `Scene.inBox_within` is their `render_within`.
@@ -227,7 +231,49 @@ A container's children are laid out in its content rectangle, which its widget n
 
 Stacks and grids prove `assign_disjoint` once, between them. Each is an `Axial` layout that only decides a size per child along its axis. `Axial.toSeparated` places those sizes one after another and proves all three laws from a lemma about the placement. A new layout along one axis gets the laws by supplying its size function and a proof that it returns one size per child.
 
-Overlap is sometimes wanted, as in a z-stack or a popup. Those layouts do not carry `assign_disjoint`. A container that needs reserved regions accepts only layouts that do, which is a type constraint on the container.
+Overlap is sometimes wanted, as in a z-stack. That layout does not carry `assign_disjoint`. A container that needs reserved regions accepts only layouts that do, which is a type constraint on the container. A popup is not a layout at all, but an overlay.
+
+### Overlays
+
+A popup, a menu or a dialog draws above the rest of the window and takes input first. In Paw it is a node of the view like any other, marked as an overlay with `Node.overlay`, so it is open exactly while the view has it. The tree treats an overlay differently from its siblings in four places:
+
+- **Layout.** Its parent's layout gives it no room. It is placed by `Overlay.place`, which puts a popup below its parent's box, or above it if there is no room below, and a modal over the whole window. Either way the result lies within the window: `Overlay.place_within`.
+- **Drawing.** `Node.render` leaves overlays out, and `Node.renderOverlays` draws them afterwards, clipped to the window, so the base keeps `render_within` and the overlays have their own law, `overlays_within`.
+- **Hit-testing and focus.** `hit?` and `focusables` do not enter overlays. The router starts from the topmost one instead.
+- **Bubbling.** An event a widget in an overlay does not handle goes up to the overlay and stops there. Nothing bubbles out of an overlay into what lies beneath it.
+
+While an overlay is open, the router gives it the pointer:
+
+```lean
+theorem Router.overlay_hit (ho : rt.overlayNode tree = some o) (h : rt.hitAt tree p = some m) :
+    m.id ∈ o.ids
+
+theorem Router.press_outside (hk : i.kind = .press p b) (ho : rt.overlay = some (o, k))
+    (hm : (rt.hitAt tree p).filter (·.enabled) = none) :
+    (rt.route tree i).2 = [{ target := o, event := .dismiss }]
+```
+
+A press outside the overlay reaches nothing but the overlay, as `Event.dismiss`, so a click aimed at a control that a popup has just covered does not land on it. The two kinds differ in what they take beyond the pointer:
+
+- **A popup** leaves the keyboard alone: keys and text still go to the focused widget, which is how a field with suggestions keeps its typing. Escape goes to the popup, and Tab moves focus only among its widgets.
+- **A modal** takes the keyboard too. Keys go to its focused widget, or to the modal itself if focus is outside it; text for a widget beneath it is dropped; assistive technology cannot act on anything beneath it. It dims the window, so what cannot be reached also looks it.
+
+An overlay's widgets are new to the router when it opens, so for `stableMs` nothing in it can be designated. This is the guidelines' delay for dialogs, and it costs nothing extra.
+
+A modal can be opened only by the user's input. `Ui.dialog`, and `alert` and `confirm` built on it, take a `Modal`, which has a private constructor:
+
+```lean
+structure Modal where
+  private mk ::
+  serial : Nat
+  time : Nat
+
+def Modal.open (d : Designation) : Modal := ⟨d.serial, d.time⟩
+```
+
+So an app can open one only in `update` at origin `user d`. A `Modal` can still be kept in the model and used later, as on a task's result, so the router also checks freshness. A modal may first appear only while the router handles the input whose designation made its token. Any other modal is refused: it is never drawn, input and assistive technology never reach it, and it is sent `dismiss` so that the app's model closes it.
+
+A dialog's own buttons follow the same rule. `confirm`'s accept button sends its message with `Req.choose`, which the runtime passes to `update` only when the input designated the button. So a click within `stableMs` of the dialog appearing, a synthetic click or a press from a screen reader cannot confirm. Escape, Enter and the cancel button take the safe choice.
 
 ### Authority and origin
 
@@ -356,7 +402,7 @@ One step for input, as in monomer's `mainLoop`:
 1. The router finds each event's target and makes a `Designation` if the checks pass.
 2. Each delivery goes to its widget, and to the widget's ancestors in turn if it does not handle it. This is how a scroll gets the wheel over its content.
 3. The messages that come out go to `update`, with origin `user d` if the delivery carried a designation `d` and `other` if not. A widget's `copy` request is honoured only with a designation.
-4. If the model changed, the view is rebuilt, merged with the tree on screen, laid out, and the router notes where everything now is.
+4. If the model changed, the view is rebuilt, merged with the tree on screen, laid out, and the router notes where everything now is and which overlays are open. Focus, hover and press on a widget that left the tree go with it. A modal that opened other than by this input is dismissed, and the view rebuilt again.
 5. The scene is drawn again only if the model changed, a widget handled the input, or focus, hover or press moved. Pointer movement over a place where nothing reacts draws nothing.
 
 `Runtime.run` is the IO loop around `step`, over a `Platform`, a structure of IO functions: poll events, the time, the window size, measure text, perform a request. The Rust layer provides one, and tests a scripted fake. Tasks run with `IO.asTask`; their results are stepped in with origin `other`.
@@ -365,9 +411,10 @@ Nodes, trees and the runtime must be in `Type` for `IO` to hold them. So a widge
 
 ## Accessibility
 
-A widget may describe itself with an `Access`: a role (label, button, check box, text input, password input, scroll view), a name, and a value or checked state. Names and values are `SafeText`, filtered as anything on screen is, because a screen reader speaks them in the same voice as the app's own words. `Node.accessTree` flattens the tree into what assistive technology sees: a window over the widgets that describe themselves, with containers that do not left out. Each frame sends it beside the scene, and the Rust layer hands it to AccessKit.
+A widget may describe itself with an `Access`: a role (label, button, check box, text input, password input, scroll view, dialog), a name, and a value or checked state. Names and values are `SafeText`, filtered as anything on screen is, because a screen reader speaks them in the same voice as the app's own words. `Node.accessTree` flattens the tree into what assistive technology sees: a window over the widgets that describe themselves, with containers that do not left out. Each frame sends it beside the scene, and the Rust layer hands it to AccessKit.
 
 - **A password field has a role and no value.** Lean never sends its value, and the Rust layer would drop one if it came.
+- **A dialog is modal.** Its panel has the dialog role, named by its title, and AccessKit marks it modal. While a modal is open, the runtime refuses a screen reader's actions on anything beneath it, and a refused modal is left out of the tree.
 - **A screen reader's actions designate nothing.** AccessKit's action requests come back as `WindowEvent.access`: a press is delivered to the widget as a click, and a focus moves focus. AT-SPI is a session bus that any program on it can talk to, so a press from it is no evidence of the user's choice, and it carries no designation: it cannot open a link or write the clipboard. A screen reader user keeps full authority through the keyboard, which is real input: Tab to the widget, then Enter.
 
 ## Performance

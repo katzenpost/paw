@@ -18,5 +18,15 @@ start_gallery
 wait_for "$LAYOUT" '^inc ' || { fail "the gallery reported its layout"; exit 1; }
 sleep 1
 python3 tests/e2e/atspi.py "$LOG" || FAILED=1
+# A confirmation opens only on real input; then a screen reader reads it as a dialog, and cannot
+# confirm it.
+W=$(xdotool search --sync --name "Paw gallery" | head -n 1)
+for k in more clear; do
+  set -- $(center "$k")
+  xdotool mousemove --window "$W" "$1" "$2" click 1
+  sleep 0.9
+done
+wait_for "$LOG" 'dialog=true' || fail "the menu opens a confirmation"
+python3 tests/e2e/atspi.py "$LOG" dialog || FAILED=1
 kill "$GALLERY_PID" "$LAUNCHER" 2>/dev/null
 exit $FAILED

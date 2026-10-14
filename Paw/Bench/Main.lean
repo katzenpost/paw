@@ -185,6 +185,31 @@ def routeBenches : IO (Array LeanBench.Bench) := do
     { name := "route move 1000", config := cfg "route"
       action := do out.set ((← rt.get).route (← t.get) { kind := .move ⟨px 400, px 300⟩, time := 1000 }) }]
 
+/-- The list with a popup open over it. -/
+def viewWithPopup (m : Model) : Node Msg :=
+  Ui.col [Ui.popup true (Ui.button "Menu" .add "menu")
+    (Ui.col ((List.range 5).map fun i => Ui.button s!"Item {i}" .add s!"item-{i}")) .add "pop", view m]
+
+def overlayBenches : IO (Array LeanBench.Bench) := do
+  let env : Env := { measure }
+  let win := Rect.ofXYWH 0 0 (px 800) (px 600)
+  let tree := (((viewWithPopup (model 1000)).resolve none).init 1).1.resize env win
+  let t ← IO.mkRef tree
+  let rt ← IO.mkRef (({} : Router).observe tree 0)
+  let inPopup : Point := ((tree.findKey? "item-2").map fun n =>
+    ⟨(n.viewport.x0 + n.viewport.x1) / 2, (n.viewport.y0 + n.viewport.y1) / 2⟩).getD ⟨0, 0⟩
+  let out ← IO.mkRef (({} : Router), ([] : List Delivery))
+  let observed ← IO.mkRef ({} : Router)
+  let scene ← IO.mkRef Scene.empty
+  return #[
+    { name := "overlay observe 1000", config := cfg "overlay"
+      action := do observed.set ((← rt.get).observe (← t.get) 10) },
+    { name := "overlay move in popup 1000", config := cfg "overlay"
+      action := do out.set ((← rt.get).route (← t.get) { kind := .move inPopup, time := 1000 }) },
+    { name := "overlay press outside 1000", config := cfg "overlay"
+      action := do out.set ((← rt.get).route (← t.get) { kind := .press ⟨px 400, px 500⟩ .primary, time := 1000 }) },
+    mkBench "overlay render overlays 1000" "overlay" t scene (·.renderOverlays env win)]
+
 def runtimeBenches : IO (Array LeanBench.Bench) := do
   let r10 ← IO.mkRef (runtime 10)
   let r100 ← IO.mkRef (runtime 100)
@@ -211,7 +236,7 @@ end Paw.Bench
 
 open Paw.Bench in
 def main (args : List String) : IO UInt32 := do
-  for suite in [textBenches, codecBenches, layoutBenches, treeBenches, routeBenches, runtimeBenches,
+  for suite in [textBenches, codecBenches, layoutBenches, treeBenches, routeBenches, overlayBenches, runtimeBenches,
       platformBenches] do
     (← suite).forM LeanBench.register
   LeanBench.runMain args

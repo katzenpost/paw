@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Reads the gallery as a screen reader would, over AT-SPI, and presses a button through it.
-# Usage: atspi.py MODEL_LOG
+# Usage: atspi.py MODEL_LOG [dialog]
+# With "dialog", checks the gallery's open confirmation instead.
 
 import sys
 import time
@@ -75,6 +76,30 @@ nodes = list(walk(window))
 by = {}
 for n in nodes:
     by.setdefault((role(n), n.get_name()), n)
+
+
+def press(n):
+    action = n.get_action_iface() if n is not None else None
+    if action is None or action.get_n_actions() == 0:
+        return False
+    action.do_action(0)
+    return True
+
+
+if len(sys.argv) > 2 and sys.argv[2] == "dialog":
+    if ("dialog", "Clear the list?") in by:
+        ok("a dialog is read as one, with its title")
+    else:
+        fail(f"a dialog is read as one, with its title (roles: {sorted({role(n) for n in nodes})})")
+    if not press(by.get(("button", "Clear"))):
+        fail("the dialog's button can be pressed through AT-SPI")
+    else:
+        time.sleep(1)
+        if "dialog=true" in last_line() and "items=[]" not in last_line():
+            ok("a screen reader cannot confirm a dialog")
+        else:
+            fail(f"a screen reader cannot confirm a dialog (last: {last_line()})")
+    sys.exit(1 if failed else 0)
 
 if ("button", "+") in by:
     ok("a button is read with its caption")

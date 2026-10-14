@@ -124,7 +124,7 @@ def eventCodec : Codec WindowEvent := { enc := eventEnc, dec := eventDec, roundt
 
 def roleTag : Role → Nat
   | .label => 0 | .button => 1 | .checkBox => 2 | .textInput => 3 | .passwordInput => 4
-  | .scrollView => 5 | .window => 6
+  | .scrollView => 5 | .window => 6 | .dialog => 7
 
 /-- An accessibility node as the Rust layer reads it. A password field's value is never sent. -/
 def accessNodeEnc (n : AccessNode) : List UInt8 :=

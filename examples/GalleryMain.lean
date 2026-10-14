@@ -10,6 +10,7 @@ import Paw.Linux
 end-to-end tests. -/
 
 def describe (m : Gallery.Model) : String :=
-  s!"count={m.count} name={m.name} agree={m.agree} items={m.items.map (·.2)} opened={m.opened}"
+  s!"count={m.count} name={m.name} agree={m.agree} items={m.items.map (·.2)} opened={m.opened} \
+    dialog={m.clearing.isSome}"
 
 def main : IO Unit := Paw.Linux.run Gallery.app "Paw gallery" 640 560 describe

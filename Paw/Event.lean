@@ -60,6 +60,8 @@ inductive Event where
   | blur
   /-- Time, in milliseconds since the app started, for widgets that asked for it. -/
   | tick (now : Nat)
+  /-- A press outside the open overlay this widget is: the user dismissed it. -/
+  | dismiss
   deriving Repr, DecidableEq, Inhabited
 
 end Paw

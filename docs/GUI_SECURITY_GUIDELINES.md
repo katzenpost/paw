@@ -121,6 +121,9 @@ Do not tell users something is final, delivered or secured when the system does 
 - Events from elsewhere (an invitation, a key change, a file offer) never open a modal dialog, take keyboard focus or raise the window. They queue as notices the user opens deliberately.
 - Wayland's xdg-activation requires a token from a user action to raise a window. Do not work around it.
 - Any dialog the app raises ignores input for a short delay after it appears. Its default button is the safe choice, and Enter or a double click that began before it appeared never confirms a dangerous action.
+- Open a modal dialog only while handling the user's input that asked for it. Permission kept from an earlier action, such as a token saved in the model, must not let a later network result open one.
+- While a popup or menu is open, a press outside it closes it and goes no further. Otherwise a popup that appears just before a click steers that click to whatever it covers, or the click lands on a control the user can no longer see. An event inside a popup that nothing in it handles must not reach the window beneath.
+- While a modal dialog is open, nothing beneath it receives input, focus or actions from assistive technology. Dim what lies beneath, so that what cannot be reached also looks it.
 
 **Overlays on Android.** Another app's overlay can cover the app so the user taps something they cannot see.
 
@@ -274,6 +277,7 @@ One message, file or image must not be able to make the app unusable. Set limits
 - [ ] Prompts for secrets and confirmations appear only after a user action, attached to their window
 - [ ] Events from elsewhere never open a focused dialog or raise the window
 - [ ] Controls ignore activation until stable; dangerous dialogs default to the safe choice and ignore early input
+- [ ] Modal dialogs open only on the user's input; nothing beneath an open modal or popup receives input
 - [ ] Sensitive controls on Android refuse obscured touches
 - [ ] Effects that use authority are produced only by user input on the object concerned
 - [ ] Each component's command type allows only the effects it needs

@@ -50,6 +50,8 @@ structure Env where
   self : WidgetId := ⟨0⟩
   /-- The rectangle the widget's children are laid out in, which the tree sets. -/
   content : Rect := default
+  /-- The window, which overlays are placed within. -/
+  window : Rect := default
 
 /-- Text measured as monomer's tests measure it: 10 pixels a character, 20 pixels a line. -/
 def Env.mock : Env := { measure := fun _ t => (px (t.text.length * 10), px 20) }
@@ -66,6 +68,9 @@ end Env
 inductive Req (Msg : Type) where
   /-- A message for the app's `update`. -/
   | emit (m : Msg)
+  /-- A message for `update` only if the input being handled designated the widget: the user
+  chose it, unmoved, not by synthetic input, and not by assistive technology. Otherwise dropped. -/
+  | choose (m : Msg)
   /-- Keyboard focus to the widget. -/
   | focus (id : WidgetId)
   | render
@@ -75,6 +80,7 @@ inductive Req (Msg : Type) where
 
 def Req.map {α β : Type} (f : α → β) : Req α → Req β
   | .emit m => .emit (f m)
+  | .choose m => .choose (f m)
   | .focus id => .focus id
   | .render => .render
   | .copy t => .copy t
@@ -89,6 +95,8 @@ inductive Role where
   | passwordInput
   | scrollView
   | window
+  /-- A modal dialog, above everything else. -/
+  | dialog
   deriving Repr, DecidableEq, Inhabited
 
 /-- How a widget describes itself to assistive technology such as a screen reader. Names and values

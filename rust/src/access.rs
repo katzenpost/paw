@@ -17,6 +17,7 @@ fn role(r: u64) -> Role {
         4 => Role::PasswordInput,
         5 => Role::ScrollView,
         6 => Role::Window,
+        7 => Role::Dialog,
         _ => Role::GenericContainer,
     }
 }
@@ -56,6 +57,10 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
             }
             if n.disabled {
                 node.set_disabled();
+            }
+            // Paw's only dialogs are modal: nothing beneath one can be reached while it is open.
+            if n.role == 7 {
+                node.set_modal();
             }
             (NodeId(n.id), node)
         })
@@ -122,6 +127,11 @@ mod tests {
         let label = update(0, &[node(0, 6, "", None, vec![5]), node(5, 0, "count: 1", None, vec![])], 1.0, "t");
         let l = &label.nodes.iter().find(|(n, _)| *n == NodeId(5)).unwrap().1;
         assert_eq!(l.value(), Some("count: 1"), "a label's text is its value");
+        let dlg = update(0, &[node(0, 6, "", None, vec![6]), node(6, 7, "Clear the list?", None, vec![])], 1.0, "t");
+        let d = &dlg.nodes.iter().find(|(n, _)| *n == NodeId(6)).unwrap().1;
+        assert_eq!(d.role(), Role::Dialog);
+        assert!(d.is_modal(), "a dialog is modal");
+        assert_eq!(d.label(), Some("Clear the list?"));
     }
 
     #[test]

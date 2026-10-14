@@ -21,7 +21,15 @@ use authority require. A click or key designates nothing when:
 - the widget appeared or moved less than `stableMs` before, so it may have slid under a pointer
   aimed at something else;
 - for a key, focus reached the widget less than `stableMs` before, so typing meant for elsewhere
-  may have followed it. -/
+  may have followed it.
+
+While an overlay is open, the topmost one takes the pointer: hits are found only within it
+(`overlay_hit`), and a press outside it dismisses it and reaches nothing else (`press_outside`).
+Tab moves focus only among its widgets, and Escape goes to it. A modal takes the keyboard too:
+keys go to its focused widget, or to the modal itself if focus is outside it, and text for a
+widget beneath it is dropped. An overlay's widgets are new when it opens, so for `stableMs`
+nothing in it can be designated. A modal may open only while the input whose designation made its
+`Modal` token is being handled; any other is refused, and never reached. -/
 
 namespace Paw
 
@@ -34,6 +42,18 @@ structure Designation where
   key : Option String
   time : Nat
   deriving Repr, DecidableEq
+
+/-- That the user opened a modal dialog, with the input numbered `serial`. Only `Modal.open` makes
+one, from a designation, so a dialog is opened only by the user's choice; and the router lets one
+open only while handling the input that made it, so a token kept from earlier opens nothing. -/
+structure Modal where
+  private mk ::
+  serial : Nat
+  time : Nat
+  deriving Repr, DecidableEq, TypeName
+
+/-- A modal dialog, opened by the input `d` came with. -/
+def Modal.open (d : Designation) : Modal := ⟨d.serial, d.time⟩
 
 inductive InputKind where
   | press (p : Point) (b : MouseButton)
@@ -77,6 +97,16 @@ structure Router where
   placed : Std.HashMap WidgetId (Rect × Nat) := {}
   /-- Each widget's path from the root, as child indices, for delivering to it directly. -/
   paths : Std.HashMap WidgetId (List Nat) := {}
+  /-- The topmost open overlay, and its kind. -/
+  overlay : Option (WidgetId × Overlay) := none
+  /-- The serial of the input being handled, if it designated something: a modal whose token
+  names it may open. -/
+  consent : Option Nat := none
+  /-- Open modals the router let open. -/
+  opened : Std.HashSet WidgetId := {}
+  /-- Modals that opened other than by the user's input, and overlays inside them: never drawn,
+  never reached. -/
+  refused : Std.HashSet WidgetId := {}
   /-- Inputs routed so far. -/
   serial : Nat := 0
   stableMs : Nat := 500
@@ -86,7 +116,8 @@ namespace Router
 
 variable {Msg : Type}
 
-/-- Notes where every widget is at `now`, after a layout, and its path for delivering to it. -/
+/-- Notes where every widget is at `now`, after a layout, and its path for delivering to it, and
+which overlays are open. -/
 def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
   let idx := tree.index
   let (placed, paths) := idx.foldl (init := (Std.HashMap.emptyWithCapacity idx.size,
@@ -97,7 +128,55 @@ def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
         | some (r', t) => if r' == r then t else now
         | none => now
       (placed.insert id (r, since), paths.insert id path)
-  { rt with placed, paths }
+  -- A modal may open only with a token from the input being handled.
+  let (ok, opened, refused, _) := tree.overlays.foldl
+    (init := (([] : List (WidgetId × Overlay)), ({} : Std.HashSet WidgetId), ({} : Std.HashSet WidgetId),
+      ([] : List (List Nat))))
+    fun (ok, opened, refused, refusedPaths) o =>
+      let path := paths[o.id]?.getD []
+      let refuse := (ok, opened, refused.insert o.id, path :: refusedPaths)
+      if refusedPaths.any (·.isPrefixOf path) then refuse
+      else match o.info.overlay with
+        | some .modal =>
+          if rt.opened.contains o.id ||
+              (!rt.refused.contains o.id && (o.state? Modal).any (some ·.serial == rt.consent)) then
+            ((o.id, .modal) :: ok, opened.insert o.id, refused, refusedPaths)
+          else refuse
+        | some k => ((o.id, k) :: ok, opened, refused, refusedPaths)
+        | none => (ok, opened, refused, refusedPaths)
+  -- Focus, hover and press on a widget that left the tree go with it. One scrolled out of view is
+  -- not in `paths` but is still in the tree.
+  let here (id : Option WidgetId) := id.filter fun i => paths.contains i || (tree.find? i).isSome
+  { rt with placed, paths, opened, refused, overlay := ok.head?, focused := here rt.focused,
+            hovered := here rt.hovered, pressed := here rt.pressed }
+
+/-- The topmost open overlay's node. -/
+def overlayNode (rt : Router) (tree : Node Msg) : Option (Node Msg) :=
+  rt.overlay.bind fun (o, _) => rt.paths[o]?.bind (tree.get? ·)
+
+/-- The widget is in the topmost open overlay, or none is open. -/
+def trapped (rt : Router) (id : WidgetId) : Bool :=
+  match rt.overlay with
+  | none => true
+  | some (o, _) => match rt.paths[o]?, rt.paths[id]? with
+    | some po, some pi => po.isPrefixOf pi
+    | _, _ => false
+
+/-- The topmost visible node at `p`: in the topmost overlay if one is open, else in the tree. -/
+def hitAt (rt : Router) (tree : Node Msg) (p : Point) : Option (Node Msg) :=
+  match rt.overlay with
+  | some _ => (rt.overlayNode tree).bind (·.hit? p)
+  | none => tree.hit? p
+
+/-- While an overlay is open, the pointer reaches only widgets in it. -/
+theorem overlay_hit {rt : Router} {tree o m : Node Msg} {p : Point}
+    (ho : rt.overlayNode tree = some o) (h : rt.hitAt tree p = some m) : m.id ∈ o.ids := by
+  unfold hitAt at h
+  split at h
+  · rw [ho] at h
+    exact Node.hit_mem_ids p o m h
+  · rename_i hn
+    simp [overlayNode, hn] at ho
 
 /-- The widget has kept its box since `stableMs` before `now`. -/
 def stable (rt : Router) (id : WidgetId) (now : Nat) : Bool :=
@@ -156,15 +235,27 @@ def hover (rt : Router) (to : Option WidgetId) (p : Point) : Router × List Deli
 /-- Routes one input through `tree`: the router after it, and the events it gives widgets. -/
 def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery :=
   let serial := rt.serial
-  let rt := { rt with serial := rt.serial + 1 }
-  let at? (p : Point) := (tree.hit? p).filter (·.enabled)
+  let rt := { rt with serial := rt.serial + 1, consent := none }
+  let at? (p : Point) := (rt.hitAt tree p).filter (·.enabled)
+  -- Where keys go: the focused widget, unless a modal is open and focus is outside it, when they go
+  -- to the modal; Escape goes to the topmost overlay unless focus is in it.
+  let inside := (rt.focused.filter rt.trapped)
+  let keyTarget (k : Key) : Option WidgetId := match rt.overlay with
+    | some (o, .modal) => inside.orElse fun _ => some o
+    | some (o, .popup) => if k == .escape then inside.orElse fun _ => some o else rt.focused
+    | none => rt.focused
+  -- Text goes to the focused widget, unless a modal is open and focus is outside it.
+  let textTarget := match rt.overlay with
+    | some (_, .modal) => inside
+    | _ => rt.focused
   match i.kind with
   | .press p b =>
     match at? p with
     | some n =>
       let (rt, focus) := if n.focusable then rt.moveFocus (some n.id) i.time else (rt, [])
       ({ rt with pressed := some n.id }, focus ++ [{ target := n.id, event := .press p b }])
-    | none => ({ rt with pressed := none }, [])
+    | none =>
+      ({ rt with pressed := none }, rt.overlay.toList.map fun (o, _) => { target := o, event := .dismiss })
   | .release p b =>
     match rt.pressed with
     | some id =>
@@ -174,10 +265,9 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
         let count := match rt.lastClick with
           | some (last, t, c) => if last == id && i.time ≤ t + rt.doubleClickMs then c + 1 else 1
           | none => 1
-        let click : Delivery :=
-          { target := id, event := .click p b count,
-            designation := rt.designate serial i id n.key false }
-        ({ rt with lastClick := some (id, i.time, count) }, [rel, click])
+        let des := rt.designate serial i id n.key false
+        let click : Delivery := { target := id, event := .click p b count, designation := des }
+        ({ rt with lastClick := some (id, i.time, count), consent := des.map (·.serial) }, [rel, click])
       else (rt, [rel])
     | none => (rt, [])
   | .move p =>
@@ -191,17 +281,27 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
   | .wheel p dx dy =>
     (rt, ((at? p).map (·.id)).toList.map fun id => { target := id, event := .wheel p dx dy })
   | .key .tab m true =>
-    let to := nextFocus tree.focusables rt.focused m.shift
+    let order := match rt.overlay with
+      | some _ => ((rt.overlayNode tree).map (·.focusables)).getD []
+      | none => tree.focusables
+    let to := nextFocus order rt.focused m.shift
     rt.moveFocus to i.time
   | .key k m pressed =>
     -- With nothing focused, keys go to the root, so that bindings around the whole view work.
-    let id := rt.focused.getD tree.id
-    let d : Delivery :=
-      { target := id, event := .key k m pressed,
-        designation := rt.designate serial i id ((tree.find? id).bind (·.key)) true }
-    (rt, [d])
-  | .text s => (rt, rt.focused.toList.map fun id => { target := id, event := .text s })
-  | .paste s => (rt, rt.focused.toList.map fun id => { target := id, event := .paste s })
+    let id := (keyTarget k).getD tree.id
+    let des := rt.designate serial i id ((tree.find? id).bind (·.key)) true
+    ({ rt with consent := des.map (·.serial) }, [{ target := id, event := .key k m pressed, designation := des }])
+  | .text s => (rt, textTarget.toList.map fun id => { target := id, event := .text s })
+  | .paste s => (rt, textTarget.toList.map fun id => { target := id, event := .paste s })
+
+/-- A press outside the open overlay goes to nothing but the overlay, as a dismissal. -/
+theorem press_outside {rt : Router} {tree : Node Msg} {i : Input} {p : Point} {b : MouseButton}
+    {o : WidgetId} {k : Overlay} (hk : i.kind = .press p b) (ho : rt.overlay = some (o, k))
+    (hm : (rt.hitAt tree p).filter (·.enabled) = none) :
+    (rt.route tree i).2 = [{ target := o, event := .dismiss }] := by
+  have : ({ rt with serial := rt.serial + 1, consent := none } : Router).hitAt tree p = rt.hitAt tree p := rfl
+  simp only [route, hk, this, hm]
+  simp [ho]
 
 /-- Every designation the router gives names the widget its delivery goes to. -/
 def designationsAgree (ds : List Delivery) : Bool :=

@@ -7,6 +7,7 @@ import Paw.Tree
 import Paw.Widgets.Basic
 import Paw.Widgets.TextField
 import Paw.Widgets.Scroll
+import Paw.Widgets.Overlay
 
 /-! # Building views
 
@@ -87,4 +88,34 @@ def width (w : Int) (child : Node Msg) : Node Msg :=
 /-- The child with `p` units of space around it. -/
 def pad (p : Int) (child : Node Msg) : Node Msg := Node.container (padLayout p) [child]
 
-end Paw.Ui
+/-- `anchor`, and while `isOpen`, `content` in a popup below it, above everything else. The pointer
+reaches only the popup while it is open; a press outside it or Escape emits `onDismiss`. Keys and
+text still go to the focused widget. -/
+def popup (isOpen : Bool) (anchor content : Node Msg) (onDismiss : Msg) (key : Option String := none) :
+    Node Msg :=
+  let pop := Node.containerWith (popupWidget onDismiss) (padLayout (px 4)) [content]
+  Node.container (box { expand := true }) (anchor :: if isOpen then [pop.overlay .popup] else []) key
+
+/-- `content` in a dialog named `title`, over the whole window, which it dims. It takes no room
+where it is placed in the view. Nothing beneath it can be reached until it closes; Escape and Enter
+emit `onDismiss`. It opens only with a token `Modal.open` made from the input being handled; one
+that appears otherwise, as on a task's result, is never shown and is dismissed at once. -/
+def dialog (m : Modal) (title : SafeName) (content : Node Msg) (onDismiss : Msg) : Node Msg :=
+  let panel := Node.containerWith (dialogPanel title) (padLayout (px 12)) [content]
+  (Node.containerWith (modalWidget m onDismiss) (box {}) [panel] (some "dialog")).overlay .modal
+
+/-- A dialog with `body` and an OK button that, like Escape, emits `onClose`. -/
+def alert (m : Modal) (title : SafeName) (body : String) (onClose : Msg) : Node Msg :=
+  dialog m title (col [Node.leaf (Widgets.label title.toText (bold := true)), paragraph body,
+    row [spacer, button "OK" onClose "ok"]] (px 8)) onClose
+
+/-- A dialog asking to confirm `body`, which should say what happens, to whom, and whether it can
+be undone. `cancel`, Escape and Enter emit `onCancel`; `accept` emits `onAccept` only when the user
+chose it: a click on it within `stableMs` of the dialog appearing, a synthetic click or a press from
+assistive technology is dropped. -/
+def confirm (m : Modal) (title : SafeName) (body : String) (onAccept onCancel : Msg)
+    (accept : String := "OK") (cancel : String := "Cancel") : Node Msg :=
+  dialog m title (col [Node.leaf (Widgets.label title.toText (bold := true)), paragraph body,
+    row [spacer, button cancel onCancel "cancel",
+      Node.leaf (Widgets.button (SafeText.trusted accept) onAccept (designated := true)) "accept"]] (px 8))
+    onCancel

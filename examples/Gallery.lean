@@ -8,8 +8,8 @@ import Paw
 /-! # Gallery
 
 Every widget Paw has, in one window: a counter, a form with a password, a checkbox, a list whose
-rows keep their state as it changes, a scrolled text, and two effects that need the user's choice:
-opening a link and copying. -/
+rows keep their state as it changes, a scrolled text, two effects that need the user's choice:
+opening a link and copying, and a menu in a popup that opens an alert and a confirmation. -/
 
 namespace Gallery
 
@@ -28,6 +28,12 @@ inductive Msg where
   | openLink
   | copyName
   | quit
+  | menu (shown : Bool)
+  | about
+  | closeAbout
+  | askClear
+  | clear
+  | keep
 
 structure Model where
   count : Int := 0
@@ -38,10 +44,14 @@ structure Model where
   items : List (String × String) := [("1", "apples"), ("2", "pears")]
   nextId : Nat := 3
   opened : Nat := 0
+  menu : Bool := false
+  about : Option Modal := none
+  clearing : Option Modal := none
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
-    a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened
+    a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened &&
+    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite]
 
@@ -69,10 +79,22 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
     if h : e.DesignatedBy d then emit (.effect d e (by decide) h)
   | .other, .copyName => pure ()
   | _, .quit => emit .quit
+  | _, .menu b => modify fun (m, cs) => ({ m with menu := b }, cs)
+  | .user d, .about => modify fun (m, cs) => ({ m with menu := false, about := Modal.open d }, cs)
+  | .other, .about => modify fun (m, cs) => ({ m with menu := false }, cs)
+  | _, .closeAbout => modify fun (m, cs) => ({ m with about := none }, cs)
+  | .user d, .askClear => modify fun (m, cs) => ({ m with menu := false, clearing := Modal.open d }, cs)
+  | .other, .askClear => modify fun (m, cs) => ({ m with menu := false }, cs)
+  | _, .clear => modify fun (m, cs) => ({ m with items := [], clearing := none }, cs)
+  | _, .keep => modify fun (m, cs) => ({ m with clearing := none }, cs)
 
 def view (m : Model) : Node Msg :=
-  Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <| Ui.pad (px 8) <| Ui.col [
-    Ui.row [Ui.button "−" .dec "dec", Ui.label s!"count: {m.count}" "count", Ui.button "+" .inc "inc"],
+  Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <| Ui.pad (px 8) <| Ui.col ([
+    Ui.row [Ui.button "−" .dec "dec", Ui.label s!"count: {m.count}" "count", Ui.button "+" .inc "inc",
+      Ui.spacer,
+      Ui.popup m.menu (Ui.button "More" (.menu true) "more")
+        (Ui.col [Ui.button "About" .about "about", Ui.button "Clear list" .askClear "clear"])
+        (.menu false) "menu"],
     Ui.row [Ui.label "Name", Ui.textField m.name .name { placeholder := SafeText.trusted "your name" } "name"],
     Ui.row [Ui.label "Password", Ui.passwordField m.pass .pass "pass"],
     Ui.checkbox "I agree" m.agree .agree "agree",
@@ -83,7 +105,11 @@ def view (m : Model) : Node Msg :=
     Ui.height (px 120) <| Ui.scroll (Ui.paragraph (String.intercalate "\n" ((List.range 12).map fun i =>
       s!"Line {i + 1} of a text longer than its box."))) "scroll",
     Ui.row [Ui.button "Open link" .openLink "link", Ui.button "Copy name" .copyName "copy",
-      Ui.label s!"links opened: {m.opened}" "opened"]]
+      Ui.label s!"links opened: {m.opened}" "opened"]] ++
+    (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
+      "A GUI library for Lean, after monomer." .closeAbout) ++
+    (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")
+      s!"This removes all {m.items.length} items. It cannot be undone." .clear .keep (accept := "Clear")))
 
 def app : App caps := { Model := Model, Msg := Msg, init := {}, update, view }
 

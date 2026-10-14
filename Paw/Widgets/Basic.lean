@@ -31,16 +31,16 @@ def centeredText (env : Env) (v : Rect) (x : Int) (t : SafeText) (style : TextSt
   let (_, h) := env.measure style t
   .text ⟨x, v.y0 + (v.height - h) / 2⟩ t style
 
-/-- One line of text. -/
-def label {Msg : Type} (t : SafeText) (style : Option TextStyle := none) : Widget Msg :=
+/-- One line of text, in bold if `bold`. -/
+def label {Msg : Type} (t : SafeText) (bold : Bool := false) : Widget Msg :=
+  let style (env : Env) : TextStyle := { textStyle env with bold }
   Widget.Spec.build (σ := NoState) {
     kind := "label"
     init := {}
     sizeReq := fun env _ =>
-      let (w, h) := env.measure (style.getD (textStyle env)) t
+      let (w, h) := env.measure (style env) t
       (fixedSize w.toNat, fixedSize h.toNat)
-    render := fun env _ v =>
-      Scene.inBox v [centeredText env v v.x0 t (style.getD (textStyle env))]
+    render := fun env _ v => Scene.inBox v [centeredText env v v.x0 t (style env)]
     render_within := fun _ _ v => Scene.inBox_within v _
     access := fun _ _ => some { role := .label, name := t } }
 
@@ -66,8 +66,10 @@ def paragraph {Msg : Type} (lines : List SafeText) : Widget Msg :=
     render_within := fun _ _ v => Scene.inBox_within v _
     access := fun _ _ => some { role := .label, name := joinLines lines } }
 
-/-- A button that emits `onClick` when clicked, or when Enter or Space is pressed on it. -/
-def button {Msg : Type} (caption : SafeText) (onClick : Msg) : Widget Msg :=
+/-- A button that emits `onClick` when clicked, or when Enter or Space is pressed on it; if
+`designated`, only when that input designated it, as `Req.choose`. -/
+def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool := false) : Widget Msg :=
+  let act : Req Msg := if designated then .choose onClick else .emit onClick
   Widget.Spec.build (σ := NoState) {
     kind := "button"
     init := {}
@@ -84,8 +86,8 @@ def button {Msg : Type} (caption : SafeText) (onClick : Msg) : Widget Msg :=
         centeredText env v (v.x0 + (v.width - w) / 2) caption (textStyle env)]
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun _ st _ e => match e with
-      | .click .. => some (st, [.emit onClick])
-      | .key .enter _ true | .key (.char ' ') _ true => some (st, [.emit onClick])
+      | .click .. => some (st, [act])
+      | .key .enter _ true | .key (.char ' ') _ true => some (st, [act])
       | .enter _ | .leave _ | .press .. | .release .. | .focus | .blur => some (st, [])
       | _ => none
     focusable := true

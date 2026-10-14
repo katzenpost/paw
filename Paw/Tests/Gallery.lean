@@ -84,6 +84,22 @@ def tests : TestM Unit := do
   checkEq "a screen reader can move focus" (some nameId) rt.router.focused
   let (rt, outs) := rt.step (.access ⟨99999⟩ .press) 8850
   checkEq "an unknown widget is ignored" 0 outs.length
+  -- The menu, the alert and the confirmation.
+  let (rt, _) := click rt "more" 9000
+  check "the menu opens" rt.model.menu
+  let (rt, _) := click rt "about" 10000
+  check "About opens an alert and closes the menu" (rt.model.about.isSome && !rt.model.menu)
+  let (rt, _) := click rt "ok" 11000
+  check "OK closes it" rt.model.about.isNone
+  let (rt, _) := click rt "more" 12000
+  let (rt, _) := click rt "clear" 13000
+  check "Clear list asks first" rt.model.clearing.isSome
+  let (rt, _) := step rt (.key .escape {} true) 13500
+  check "Escape keeps the list" (rt.model.clearing.isNone && rt.model.items.length == 2)
+  let (rt, _) := click rt "more" 14000
+  let (rt, _) := click rt "clear" 15000
+  let (rt, _) := click rt "accept" 16000
+  check "Clear empties it" (rt.model.clearing.isNone && rt.model.items.isEmpty)
   let (rt, outs) := step rt (.key (.char 'q') { ctrl := true } true) 9000
   check "ctrl-q quits" (rt.quit && (requests outs).contains .quit)
 

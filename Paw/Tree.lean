@@ -33,6 +33,34 @@ namespace Paw
 
 instance : Repr Dynamic := ⟨fun _ _ => "<dynamic>"⟩
 
+/-- How an overlay is placed: drawn after the rest of the tree, above it, and placed by the window
+rather than by its parent's layout. -/
+inductive Overlay where
+  /-- Below its parent's box, or above it if there is no room below, kept within the window. -/
+  | popup
+  /-- The whole window. -/
+  | modal
+  deriving Repr, DecidableEq, Inhabited
+
+/-- Where an overlay of kind `k` asking for `req` goes, for a parent placed at `anchor`: within the
+window `win`, never in its parent's box. -/
+def Overlay.place (k : Overlay) (win anchor : Rect) (req : SizeReq × SizeReq) : Rect :=
+  match k with
+  | .modal => win
+  | .popup =>
+    let w : Int := max (req.1.fixed + req.1.flex : Nat) anchor.width
+    let h : Int := req.2.fixed + req.2.flex
+    let y := if anchor.y1 + h > win.y1 && anchor.y0 - h ≥ win.y0 then anchor.y0 - h else anchor.y1
+    let x := max win.x0 (min anchor.x0 (win.x1 - w))
+    let y := max win.y0 (min y (win.y1 - h))
+    (Rect.ofXYWH x y w h).inter win
+
+theorem Overlay.place_within (k : Overlay) (win anchor : Rect) (req : SizeReq × SizeReq) :
+    (k.place win anchor req).Within win := by
+  cases k
+  · exact Rect.inter_within _ _
+  · exact Rect.within_refl win
+
 structure NodeInfo where
   id : WidgetId := ⟨0⟩
   key : Option String := none
@@ -49,6 +77,8 @@ structure NodeInfo where
   reused : Bool := false
   /-- `req` holds for the node as it is: no state below it has changed since `measure`. -/
   measured : Bool := false
+  /-- An overlay: drawn above the tree, given input first, and placed by the window. -/
+  overlay : Option Overlay := none
   deriving Repr, Inhabited
 
 inductive Node (Msg : Type) where
@@ -109,6 +139,13 @@ def withInfo (f : NodeInfo → NodeInfo) : Node Msg → Node Msg
 def hide (n : Node Msg) : Node Msg := n.withInfo ({ · with visible := false })
 
 def disable (n : Node Msg) : Node Msg := n.withInfo ({ · with enabled := false })
+
+/-- The node as an overlay of kind `k`: its parent's layout gives it no room, and it is drawn
+above everything else, placed by `Overlay.place`. -/
+def overlay (k : Overlay) (n : Node Msg) : Node Msg := n.withInfo ({ · with overlay := some k })
+
+/-- Laid out by its parent's layout, not an overlay. -/
+def inFlow (n : Node Msg) : Bool := n.info.overlay.isNone
 
 /-- Children with any key a sibling before already has dropped. -/
 def dedupKeys (seen : Std.HashSet String) : List (Node Msg) → List (Node Msg)
@@ -330,12 +367,12 @@ def itemList (env : Env) : List (Node Msg) → List Item
   | [] => []
   | c :: cs =>
     let (w, h) := sizeReq env c
-    { w, h, visible := c.visible } :: itemList env cs
+    { w, h, visible := c.visible && c.inFlow } :: itemList env cs
 end
 
 /-- Children as their layout sees them, from the size requests `measure` kept. -/
 def keptItems (cs : List (Node Msg)) : List Item :=
-  cs.map fun c => { w := c.info.req.1, h := c.info.req.2, visible := c.visible }
+  cs.map fun c => { w := c.info.req.1, h := c.info.req.2, visible := c.visible && c.inFlow }
 
 mutual
 /-- The node with every node's size request worked out and kept, bottom up, once each. -/
@@ -361,21 +398,29 @@ def place (env : Env) : Node Msg → Rect → Node Msg
   | mk w st i (some l) cs, v =>
     let items := keptItems cs
     let content := w.content (envAt env i) st v i.req
-    mk w st { i with viewport := v, content } (some l) (placeList env cs (l.assign content items))
+    mk w st { i with viewport := v, content } (some l) (placeList env v cs (l.assign content items))
   | deferred i a s b, v => deferred { i with viewport := v, content := v } a s b
 
-def placeList (env : Env) : List (Node Msg) → List Rect → List (Node Msg)
-  | c :: cs, r :: rs => place env c r :: placeList env cs rs
+/-- Children placed where their layout puts them, and overlays where `Overlay.place` puts them for
+a parent at `anchor`. -/
+def placeList (env : Env) (anchor : Rect) : List (Node Msg) → List Rect → List (Node Msg)
+  | c :: cs, r :: rs =>
+    let r := match c.info.overlay with
+      | some k => k.place env.window anchor c.info.req
+      | none => r
+    place env c r :: placeList env anchor cs rs
   | cs, [] => cs
   | [], _ => []
 end
 
-/-- The node placed in `v`, and its children where its layout puts them. -/
-def resize (env : Env) (n : Node Msg) (v : Rect) : Node Msg := place env (measure env n) v
+/-- The node placed in `v`, the window, and its children where its layout puts them. -/
+def resize (env : Env) (n : Node Msg) (v : Rect) : Node Msg :=
+  place { env with window := v } (measure env n) v
 
 mutual
 /-- What the node and its descendants draw, within its box, leaving out descendants wholly outside
-`seen`, the part of the window its ancestors leave visible, which their clips would remove. -/
+`seen`, the part of the window its ancestors leave visible, which their clips would remove, and
+overlays, which `renderOverlays` draws. -/
 def renderIn (env : Env) (seen : Rect) : Node Msg → Scene
   | mk w st i _ cs =>
     if i.visible then
@@ -386,7 +431,7 @@ def renderIn (env : Env) (seen : Rect) : Node Msg → Scene
 def renderList (env : Env) (seen : Rect) : List (Node Msg) → Scene
   | [] => Scene.empty
   | c :: cs =>
-    if (c.viewport.inter seen).isEmpty then renderList env seen cs
+    if !c.inFlow || (c.viewport.inter seen).isEmpty then renderList env seen cs
     else renderIn env seen c ++ renderList env seen cs
 end
 
@@ -405,6 +450,31 @@ theorem renderIn_within (env : Env) (seen : Rect) (n : Node Msg) :
 
 theorem render_within (env : Env) (n : Node Msg) : (n.render env).Within n.viewport :=
   renderIn_within env n.viewport n
+
+mutual
+/-- The visible overlays below the node, in preorder: an overlay inside another comes after it. -/
+def overlaysIn : Node Msg → List (Node Msg)
+  | mk _ _ i _ cs => if i.visible then overlaysList cs else []
+  | deferred .. => []
+
+def overlaysList : List (Node Msg) → List (Node Msg)
+  | [] => []
+  | c :: cs =>
+    (if !c.inFlow && c.visible then [c] else []) ++ overlaysIn c ++ overlaysList cs
+end
+
+/-- The open overlays, bottom first. -/
+def overlays (n : Node Msg) : List (Node Msg) := n.overlaysIn
+
+/-- What the open overlays draw, bottom first, within the window `win`, leaving out those `hide`
+names. -/
+def renderOverlays (env : Env) (win : Rect) (n : Node Msg) (hide : WidgetId → Bool := fun _ => false) :
+    Scene :=
+  (Scene.ofList ((n.overlays.filter (!hide ·.id)).flatMap fun o => (o.render env).items)).clip win
+
+theorem overlays_within (env : Env) (win : Rect) (n : Node Msg) (hide : WidgetId → Bool) :
+    (n.renderOverlays env win hide).Within win :=
+  Scene.clip_within win _
 
 mutual
 def find? (id : WidgetId) : Node Msg → Option (Node Msg)
@@ -464,23 +534,35 @@ def handleList (env : Env) (id : WidgetId) (e : Event) :
 end
 
 /-- `e` to the node at `path`, and if it does not handle it, to its ancestors in turn, nearest
-first: the tree with the new state, and the requests of the node that handled it; or `none`, with
-the tree untouched, if none did. One walk down the path. -/
-def bubbleAt (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Msg × List (Req Msg))
+first, but none above an overlay, so that nothing bubbles out of one into what lies beneath it:
+the tree with the new state, and the requests of the node that handled it, or `none`, with the
+tree untouched, if none did; and whether an overlay was passed. One walk down the path. -/
+def bubbleIn (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Msg × List (Req Msg)) × Bool
   | path, mk w st i l cs =>
-    let own (cs : List (Node Msg)) : Option (Node Msg × List (Req Msg)) :=
-      (w.handle (envAt env i) st i.viewport e).map fun (st', reqs) =>
-        (mk w st' { i with measured := false } l cs, reqs)
+    let own (cs : List (Node Msg)) : Option (Node Msg × List (Req Msg)) × Bool :=
+      ((w.handle (envAt env i) st i.viewport e).map fun (st', reqs) =>
+        (mk w st' { i with measured := false } l cs, reqs), i.overlay.isSome)
     match path with
     | [] => own cs
     | k :: rest =>
       match cs[k]? with
       | some c =>
-        match bubbleAt env e rest c with
-        | some (c', reqs) => some (mk w st { i with measured := false } l (cs.set k c'), reqs)
-        | none => own cs
-      | none => none
-  | _, deferred .. => none
+        match bubbleIn env e rest c with
+        | (some (c', reqs), f) => (some (mk w st { i with measured := false } l (cs.set k c'), reqs), f)
+        | (none, true) => (none, true)
+        | (none, false) => own cs
+      | none => (none, false)
+  | _, deferred .. => (none, false)
+
+/-- `e` to the node at `path`, bubbling up as `bubbleIn` does. -/
+def bubbleAt (env : Env) (e : Event) (path : List Nat) (n : Node Msg) :
+    Option (Node Msg × List (Req Msg)) :=
+  (bubbleIn env e path n).1
+
+/-- The node at `path`, as child indices from this one. -/
+def get? : List Nat → Node Msg → Option (Node Msg)
+  | [], n => some n
+  | k :: ks, n => n.children[k]?.bind (get? ks)
 
 /-- The ids of the node with `id` and its ancestors, nearest first. -/
 def lineage (n : Node Msg) (id : WidgetId) : List WidgetId :=
@@ -509,7 +591,8 @@ partial def mapMsg {β : Type} (f : Msg → β) : Node Msg → Node β
   | deferred i a s b => deferred i a s fun u => mapMsg f (b u)
 
 mutual
-/-- The topmost visible node at `p`: the deepest, and of overlapping siblings the later. -/
+/-- The topmost visible node at `p`: the deepest, and of overlapping siblings the later. Overlays
+below the node are not searched; the router searches the topmost one first. -/
 def hit? (p : Point) : Node Msg → Option (Node Msg)
   | n@(mk _ _ i _ cs) =>
     if i.visible && i.viewport.contains p then (hitList? p cs).orElse fun _ => some n else none
@@ -517,7 +600,7 @@ def hit? (p : Point) : Node Msg → Option (Node Msg)
 
 def hitList? (p : Point) : List (Node Msg) → Option (Node Msg)
   | [] => none
-  | c :: cs => (hitList? p cs).orElse fun _ => hit? p c
+  | c :: cs => (hitList? p cs).orElse fun _ => if c.inFlow then hit? p c else none
 end
 
 mutual
@@ -556,11 +639,55 @@ theorem hitList_spec (p : Point) : ∀ (cs : List (Node Msg)) (m : Node Msg), hi
     | none =>
       rw [hl] at h
       simp only [Option.orElse_none] at h
-      exact hit_spec p c m h
+      split at h
+      · exact hit_spec p c m h
+      · cases h
 end
 
 mutual
-/-- The nodes that can take focus, in the order tab visits them. -/
+/-- What a node finds at a point lies in its subtree. -/
+theorem hit_mem_ids (p : Point) : ∀ (n m : Node Msg), hit? p n = some m → m.id ∈ n.ids
+  | mk w st i l cs, m, h => by
+    simp only [hit?] at h
+    split at h
+    · cases hl : hitList? p cs with
+      | some m' =>
+        rw [hl] at h
+        simp only [Option.orElse_some, Option.some.injEq] at h
+        subst h
+        simp only [ids]
+        exact List.mem_cons_of_mem _ (hitList_mem_ids p cs m' hl)
+      | none =>
+        rw [hl] at h
+        simp only [Option.orElse_none, Option.some.injEq] at h
+        subst h
+        simp [ids, id, info]
+    · cases h
+  | deferred .., m, h => by simp [hit?] at h
+
+theorem hitList_mem_ids (p : Point) : ∀ (cs : List (Node Msg)) (m : Node Msg),
+    hitList? p cs = some m → m.id ∈ idsList cs
+  | [], m, h => by cases h
+  | c :: cs, m, h => by
+    simp only [hitList?] at h
+    simp only [idsList, List.mem_append]
+    cases hl : hitList? p cs with
+    | some m' =>
+      rw [hl] at h
+      simp only [Option.orElse_some, Option.some.injEq] at h
+      subst h
+      exact Or.inr (hitList_mem_ids p cs m' hl)
+    | none =>
+      rw [hl] at h
+      simp only [Option.orElse_none] at h
+      split at h
+      · exact Or.inl (hit_mem_ids p c m h)
+      · cases h
+end
+
+mutual
+/-- The nodes that can take focus, in the order tab visits them, leaving out overlays below the
+node. -/
 def focusables : Node Msg → List WidgetId
   | n@(mk _ _ i _ cs) =>
     if i.visible then (if n.focusable then [i.id] else []) ++ focusablesList cs else []
@@ -568,7 +695,7 @@ def focusables : Node Msg → List WidgetId
 
 def focusablesList : List (Node Msg) → List WidgetId
   | [] => []
-  | c :: cs => focusables c ++ focusablesList cs
+  | c :: cs => (if c.inFlow then focusables c else []) ++ focusablesList cs
 end
 
 mutual
@@ -584,24 +711,28 @@ def keyedPlacementsList : List (Node Msg) → List (String × Rect)
 end
 
 mutual
-/-- Every visible node's id, box and path from the root, added to `acc` in preorder. -/
-def indexInto (clip : Rect) (path : Array Nat) (acc : Array (WidgetId × Rect × List Nat)) :
+/-- Every visible node's id, box and path from the root, added to `acc` in preorder. An overlay is
+clipped only by the window `win`. -/
+def indexInto (win clip : Rect) (path : Array Nat) (acc : Array (WidgetId × Rect × List Nat)) :
     Node Msg → Array (WidgetId × Rect × List Nat)
   | mk _ _ i _ cs =>
     let seen := i.viewport.inter clip
-    if i.visible && !seen.isEmpty then indexList seen path 0 (acc.push (i.id, i.viewport, path.toList)) cs
+    if i.visible && !seen.isEmpty then
+      indexList win seen path 0 (acc.push (i.id, i.viewport, path.toList)) cs
     else acc
   | deferred .. => acc
 
-def indexList (clip : Rect) (path : Array Nat) (idx : Nat) (acc : Array (WidgetId × Rect × List Nat)) :
-    List (Node Msg) → Array (WidgetId × Rect × List Nat)
+def indexList (win clip : Rect) (path : Array Nat) (idx : Nat)
+    (acc : Array (WidgetId × Rect × List Nat)) : List (Node Msg) → Array (WidgetId × Rect × List Nat)
   | [] => acc
-  | c :: cs => indexList clip path (idx + 1) (indexInto clip (path.push idx) acc c) cs
+  | c :: cs =>
+    indexList win clip path (idx + 1) (indexInto win (if c.inFlow then clip else win) (path.push idx) acc c) cs
 end
 
 /-- Every node that can be seen, its id, box and path from the root, in preorder: visible, and
 not wholly clipped away by the boxes around it, such as a scroll's. -/
-def index (n : Node Msg) : Array (WidgetId × Rect × List Nat) := indexInto n.viewport #[] #[] n
+def index (n : Node Msg) : Array (WidgetId × Rect × List Nat) :=
+  indexInto n.viewport n.viewport #[] #[] n
 
 mutual
 /-- Every visible node's id and box. -/
@@ -616,30 +747,31 @@ end
 
 mutual
 /-- The accessibility nodes at and under `n`, added to `acc`, and the ids of the topmost of them:
-widgets that describe themselves, with containers that do not left out. -/
-def accessFrom (env : Env) : Node Msg → Array AccessNode → Array AccessNode × List Nat
+widgets that describe themselves, with containers that do not left out, and subtrees `hide` names
+left out whole. -/
+def accessFrom (env : Env) (hide : WidgetId → Bool) : Node Msg → Array AccessNode → Array AccessNode × List Nat
   | n@(mk w st i _ cs), acc =>
-    if !i.visible then (acc, [])
+    if !i.visible || hide i.id then (acc, [])
     else match w.access (envAt env i) st with
       | some a =>
-        let (acc, kids) := accessList env cs acc
+        let (acc, kids) := accessList env hide cs acc
         (acc.push { id := i.id.n, access := a, bounds := i.viewport, focusable := n.focusable,
                     disabled := !i.enabled, children := kids }, [i.id.n])
-      | none => accessList env cs acc
+      | none => accessList env hide cs acc
   | deferred .., acc => (acc, [])
 
-def accessList (env : Env) : List (Node Msg) → Array AccessNode → Array AccessNode × List Nat
+def accessList (env : Env) (hide : WidgetId → Bool) : List (Node Msg) → Array AccessNode → Array AccessNode × List Nat
   | [], acc => (acc, [])
   | c :: cs, acc =>
-    let (acc, k1) := accessFrom env c acc
-    let (acc, k2) := accessList env cs acc
+    let (acc, k1) := accessFrom env hide c acc
+    let (acc, k2) := accessList env hide cs acc
     (acc, k1 ++ k2)
 end
 
 /-- The tree as assistive technology sees it: a window, id 0, over the widgets that describe
 themselves. -/
-def accessTree (env : Env) (n : Node Msg) : List AccessNode :=
-  let (nodes, top) := accessFrom env n #[]
+def accessTree (env : Env) (n : Node Msg) (hide : WidgetId → Bool := fun _ => false) : List AccessNode :=
+  let (nodes, top) := accessFrom env hide n #[]
   { id := 0, access := { role := .window }, bounds := n.viewport, focusable := false,
     disabled := false, children := top } :: nodes.toList
 

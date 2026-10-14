@@ -64,6 +64,12 @@ def galleryUsed : Runtime GApp := Id.run do
   rt := step rt (.key (.char 'a') { ctrl := true } true) 6600
   return rt
 
+/-- The gallery with its menu open. -/
+def galleryMenu : Runtime GApp := click gallery "more" 1000
+
+/-- The gallery asking to clear its list. -/
+def galleryConfirm : Runtime GApp := click galleryMenu "clear" 2000
+
 /-- A fill of `c`, to stand beside text. -/
 def swatch (c : Color) : Widget Unit := Widget.Spec.build (σ := NoState) {
   kind := "swatch"
@@ -90,6 +96,8 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
   ("gallery", sceneOf gallery, 640, 560, 1000),
   ("gallery-used", sceneOf galleryUsed, 640, 560, 1000),
   ("gallery-hidpi", sceneOf gallery, 1280, 1120, 2000),
+  ("popup-open", sceneOf galleryMenu, 640, 560, 1000),
+  ("confirm", sceneOf galleryConfirm, 640, 560, 1000),
   ("button", draw oneButton 140 50, 140, 50, 1000),
   ("button-hovered", draw oneButton 140 50 { env with hovered := some buttonId }, 140, 50, 1000),
   ("button-pressed", draw oneButton 140 50 { env with hovered := some buttonId, pressed := some buttonId },

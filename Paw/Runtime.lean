@@ -89,20 +89,21 @@ variable {caps : List Cap} {app : App caps}
 
 def env (rt : Runtime app) : Env :=
   { measure := rt.measure, now := rt.now, theme := rt.theme, focused := rt.router.focused,
-    hovered := rt.router.hovered, pressed := rt.router.pressed }
+    hovered := rt.router.hovered, pressed := rt.router.pressed, window := rt.window }
 
 /-- The tree placed in the window, and the router told where everything is. -/
 def layout (rt : Runtime app) : Runtime app :=
   let tree := rt.tree.resize rt.env rt.window
   { rt with tree, router := rt.router.observe tree rt.now }
 
-/-- The window's background, then the tree. -/
+/-- The window's background, then the tree, then its open overlays. -/
 def present (rt : Runtime app) : Output app.Msg :=
-  .request (.present (Scene.inBox rt.window [.fill rt.window rt.theme.background 0] ++ rt.tree.render rt.env))
+  .request (.present (Scene.inBox rt.window [.fill rt.window rt.theme.background 0] ++
+    rt.tree.render rt.env ++ rt.tree.renderOverlays rt.env rt.window rt.router.refused.contains))
 
 /-- The tree as assistive technology sees it. -/
 def accessOut (rt : Runtime app) : Output app.Msg :=
-  .request (.access ((rt.router.focused.map (·.n)).getD 0) (rt.tree.accessTree rt.env))
+  .request (.access ((rt.router.focused.map (·.n)).getD 0) (rt.tree.accessTree rt.env rt.router.refused.contains))
 
 /-- A new frame: the scene, and the tree for assistive technology if it may have changed. That
 tree does not depend on hover or press, so a frame for those alone leaves it out. -/
@@ -119,6 +120,9 @@ def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List
 /-- What a widget's request comes to, while handling a delivery with origin `o`. -/
 def applyReq (rt : Runtime app) (o : Origin) : Req app.Msg → Runtime app × List (Output app.Msg)
   | .emit m => rt.applyMsg o m
+  | .choose m => match o with
+    | .user _ => rt.applyMsg o m
+    | .other => (rt, [])
   | .focus id => ({ rt with router := (rt.router.moveFocus (some id) rt.now).1 }, [])
   | .render => (rt, [])
   | .copy t => match o with
@@ -141,12 +145,24 @@ def deliver (rt : Runtime app) (d : Delivery) : Runtime app × List (Output app.
   (rt, outs, reqs.isSome)
 
 /-- The view rebuilt from the model, merged with the tree on screen and laid out; what nodes that
-left the tree asked on leaving is handled as messages of origin `other`. -/
-def rebuild (rt : Runtime app) : Runtime app × List (Output app.Msg) :=
+left the tree asked on leaving is handled as messages of origin `other`. A modal the router refused
+to open is dismissed, and if that changes the model, the view is rebuilt again, up to `fuel` times. -/
+def rebuild (rt : Runtime app) (fuel : Nat := 2) : Runtime app × List (Output app.Msg) :=
   let view := (app.view rt.model).resolve (some rt.tree)
   let (tree, reqs, nextId) := view.merge rt.env rt.tree rt.nextId
-  let (rt, outs) := { rt with tree, nextId }.applyReqs .other reqs
-  (rt.layout, outs)
+  let refusedBefore := rt.router.refused
+  let (rt, outs) := { rt with tree, nextId, updated := false }.applyReqs .other reqs
+  let rt := rt.layout
+  let fresh := rt.router.refused.toList.filter (!refusedBefore.contains ·)
+  let (rt, outs') := fresh.foldl (fun (rt, outs) id =>
+    let (rt, o, _) := rt.deliver { target := id, event := .dismiss }; (rt, outs ++ o)) (rt, [])
+  match fuel with
+  | fuel + 1 =>
+    if rt.updated then
+      let (rt, outs'') := { rt with updated := false }.rebuild fuel
+      (rt, outs ++ outs' ++ outs'')
+    else (rt, outs ++ outs')
+  | 0 => ({ rt with updated := false }, outs ++ outs')
 
 /-- After handling something: rebuild if the model changed, and draw if anything did. `access`
 says whether the tree for assistive technology may have changed short of a rebuild: a widget's
@@ -174,7 +190,7 @@ def start (app : App caps) (window : Rect) (now : Nat)
 
 /-- One event from the window. -/
 def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List (Output app.Msg) :=
-  let rt := { rt with now }
+  let rt := { rt with now, router := { rt.router with consent := none } }
   match ev with
   | .input i =>
     let before := rt.model
@@ -190,6 +206,8 @@ def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List
     (rt, rt.frame)
   | .access id action =>
     let before := rt.model
+    -- While an overlay is open, nothing beneath it can be acted on.
+    if !rt.router.trapped id then (rt, []) else
     match rt.tree.find? id, action with
     | some n, .press =>
       let p : Point := ⟨(n.viewport.x0 + n.viewport.x1) / 2, (n.viewport.y0 + n.viewport.y1) / 2⟩
@@ -209,7 +227,7 @@ def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List
 /-- A task's result, as a message of origin `other`. -/
 def taskResult (rt : Runtime app) (m : app.Msg) (now : Nat) : Runtime app × List (Output app.Msg) :=
   let before := rt.model
-  let (rt, outs) := { rt with now }.applyMsg .other m
+  let (rt, outs) := { rt with now, router := { rt.router with consent := none } }.applyMsg .other m
   rt.settle before false outs
 
 end Runtime

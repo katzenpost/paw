@@ -107,6 +107,8 @@ structure Router where
   /-- Modals that opened other than by the user's input, and overlays inside them: never drawn,
   never reached. -/
   refused : Std.HashSet WidgetId := {}
+  /-- The overlays to draw, bottom first, with their paths: those open and not refused. -/
+  shown : Array (WidgetId × List Nat) := #[]
   /-- Inputs routed so far. -/
   serial : Nat := 0
   stableMs : Nat := 500
@@ -119,7 +121,8 @@ variable {Msg : Type}
 /-- Notes where every widget is at `now`, after a layout, and its path for delivering to it, and
 which overlays are open. -/
 def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
-  let idx := tree.index
+  let index := tree.index
+  let idx := index.nodes
   let (placed, paths) := idx.foldl (init := (Std.HashMap.emptyWithCapacity idx.size,
       Std.HashMap.emptyWithCapacity idx.size))
     fun ((placed : Std.HashMap WidgetId (Rect × Nat)), (paths : Std.HashMap WidgetId (List Nat)))
@@ -129,25 +132,24 @@ def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
         | none => now
       (placed.insert id (r, since), paths.insert id path)
   -- A modal may open only with a token from the input being handled.
-  let (ok, opened, refused, _) := tree.overlays.foldl
-    (init := (([] : List (WidgetId × Overlay)), ({} : Std.HashSet WidgetId), ({} : Std.HashSet WidgetId),
-      ([] : List (List Nat))))
-    fun (ok, opened, refused, refusedPaths) o =>
-      let path := paths[o.id]?.getD []
-      let refuse := (ok, opened, refused.insert o.id, path :: refusedPaths)
+  let (ok, shown, opened, refused, _) := index.overlays.foldl
+    (init := (([] : List (WidgetId × Overlay)), (#[] : Array (WidgetId × List Nat)),
+      ({} : Std.HashSet WidgetId), ({} : Std.HashSet WidgetId), ([] : List (List Nat))))
+    fun (ok, shown, opened, refused, refusedPaths) (o, path) =>
+      let refuse := (ok, shown, opened, refused.insert o.id, path :: refusedPaths)
       if refusedPaths.any (·.isPrefixOf path) then refuse
       else match o.info.overlay with
         | some .modal =>
           if rt.opened.contains o.id ||
               (!rt.refused.contains o.id && (o.state? Modal).any (some ·.serial == rt.consent)) then
-            ((o.id, .modal) :: ok, opened.insert o.id, refused, refusedPaths)
+            ((o.id, .modal) :: ok, shown.push (o.id, path), opened.insert o.id, refused, refusedPaths)
           else refuse
-        | some k => ((o.id, k) :: ok, opened, refused, refusedPaths)
-        | none => (ok, opened, refused, refusedPaths)
+        | some k => ((o.id, k) :: ok, shown.push (o.id, path), opened, refused, refusedPaths)
+        | none => (ok, shown, opened, refused, refusedPaths)
   -- Focus, hover and press on a widget that left the tree go with it. One scrolled out of view is
   -- not in `paths` but is still in the tree.
   let here (id : Option WidgetId) := id.filter fun i => paths.contains i || (tree.find? i).isSome
-  { rt with placed, paths, opened, refused, overlay := ok.head?, focused := here rt.focused,
+  { rt with placed, paths, opened, refused, shown, overlay := ok.head?, focused := here rt.focused,
             hovered := here rt.hovered, pressed := here rt.pressed }
 
 /-- The topmost open overlay's node. -/

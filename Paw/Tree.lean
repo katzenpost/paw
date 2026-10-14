@@ -466,14 +466,12 @@ end
 /-- The open overlays, bottom first. -/
 def overlays (n : Node Msg) : List (Node Msg) := n.overlaysIn
 
-/-- What the open overlays draw, bottom first, within the window `win`, leaving out those `hide`
-names. -/
-def renderOverlays (env : Env) (win : Rect) (n : Node Msg) (hide : WidgetId → Bool := fun _ => false) :
-    Scene :=
-  (Scene.ofList ((n.overlays.filter (!hide ·.id)).flatMap fun o => (o.render env).items)).clip win
+/-- What the overlays `os` draw, bottom first, within the window `win`. -/
+def renderOverlays (env : Env) (win : Rect) (os : List (Node Msg)) : Scene :=
+  (Scene.ofList (os.flatMap fun o => (o.render env).items)).clip win
 
-theorem overlays_within (env : Env) (win : Rect) (n : Node Msg) (hide : WidgetId → Bool) :
-    (n.renderOverlays env win hide).Within win :=
+theorem overlays_within (env : Env) (win : Rect) (os : List (Node Msg)) :
+    (renderOverlays env win os).Within win :=
   Scene.clip_within win _
 
 mutual
@@ -710,20 +708,28 @@ def keyedPlacementsList : List (Node Msg) → List (String × Rect)
   | c :: cs => keyedPlacements c ++ keyedPlacementsList cs
 end
 
+/-- The nodes that can be seen: each one's id, box and path from the root, and the overlays among
+them with their paths, both in preorder. -/
+structure Index (Msg : Type) where
+  nodes : Array (WidgetId × Rect × List Nat) := #[]
+  overlays : Array (Node Msg × List Nat) := #[]
+
 mutual
 /-- Every visible node's id, box and path from the root, added to `acc` in preorder. An overlay is
 clipped only by the window `win`. -/
-def indexInto (win clip : Rect) (path : Array Nat) (acc : Array (WidgetId × Rect × List Nat)) :
-    Node Msg → Array (WidgetId × Rect × List Nat)
-  | mk _ _ i _ cs =>
+def indexInto (win clip : Rect) (path : Array Nat) (acc : Index Msg) : Node Msg → Index Msg
+  | n@(mk _ _ i _ cs) =>
     let seen := i.viewport.inter clip
     if i.visible && !seen.isEmpty then
-      indexList win seen path 0 (acc.push (i.id, i.viewport, path.toList)) cs
+      let p := path.toList
+      let acc := { nodes := acc.nodes.push (i.id, i.viewport, p),
+                   overlays := if i.overlay.isSome then acc.overlays.push (n, p) else acc.overlays }
+      indexList win seen path 0 acc cs
     else acc
   | deferred .. => acc
 
-def indexList (win clip : Rect) (path : Array Nat) (idx : Nat)
-    (acc : Array (WidgetId × Rect × List Nat)) : List (Node Msg) → Array (WidgetId × Rect × List Nat)
+def indexList (win clip : Rect) (path : Array Nat) (idx : Nat) (acc : Index Msg) :
+    List (Node Msg) → Index Msg
   | [] => acc
   | c :: cs =>
     indexList win clip path (idx + 1) (indexInto win (if c.inFlow then clip else win) (path.push idx) acc c) cs
@@ -731,8 +737,8 @@ end
 
 /-- Every node that can be seen, its id, box and path from the root, in preorder: visible, and
 not wholly clipped away by the boxes around it, such as a scroll's. -/
-def index (n : Node Msg) : Array (WidgetId × Rect × List Nat) :=
-  indexInto n.viewport n.viewport #[] #[] n
+def index (n : Node Msg) : Index Msg :=
+  indexInto n.viewport n.viewport #[] {} n
 
 mutual
 /-- Every visible node's id and box. -/

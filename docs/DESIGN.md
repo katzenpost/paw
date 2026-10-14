@@ -425,6 +425,7 @@ What the benchmarks have shaped so far:
 
 - **Nothing scans a list per element.** Merge finds keyed children through a hash map and records the old nodes it used in a hash set; key de-duplication keeps the keys seen in a hash set, and its uniqueness proof is about that set.
 - **An event goes straight to its widget.** The router keeps each widget's path when it notes where widgets are, and an event walks down that path once, trying the deepest widget first and then each ancestor, rather than searching the tree for each of them.
+- **Overlays are found in the walk that already indexes the tree.** The router notes the open ones and their paths, and a frame draws them from those paths, without searching the tree.
 - **Size requests are worked out once per layout.** `measure` computes every node's request bottom up and keeps it, and `place` lays out from the kept requests.
 - **Moving the pointer over nothing that reacts costs no layout or drawing.** The scene is drawn again only if something changed.
 - **Most text is ASCII**, so the character checks decide printable ASCII first.

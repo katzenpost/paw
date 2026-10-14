@@ -208,7 +208,10 @@ def overlayBenches : IO (Array LeanBench.Bench) := do
       action := do out.set ((← rt.get).route (← t.get) { kind := .move inPopup, time := 1000 }) },
     { name := "overlay press outside 1000", config := cfg "overlay"
       action := do out.set ((← rt.get).route (← t.get) { kind := .press ⟨px 400, px 500⟩ .primary, time := 1000 }) },
-    mkBench "overlay render overlays 1000" "overlay" t scene (·.renderOverlays env win)]
+    { name := "overlay render overlays 1000", config := cfg "overlay"
+      action := do
+        let (r, t) := (← rt.get, ← t.get)
+        scene.set (Node.renderOverlays env win (r.shown.toList.filterMap fun (_, p) => t.get? p)) }]
 
 def runtimeBenches : IO (Array LeanBench.Bench) := do
   let r10 ← IO.mkRef (runtime 10)

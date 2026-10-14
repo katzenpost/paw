@@ -96,10 +96,14 @@ def layout (rt : Runtime app) : Runtime app :=
   let tree := rt.tree.resize rt.env rt.window
   { rt with tree, router := rt.router.observe tree rt.now }
 
+/-- What the open overlays the router lets be seen draw, bottom first. -/
+def overlayScene (rt : Runtime app) : Scene :=
+  Node.renderOverlays rt.env rt.window (rt.router.shown.toList.filterMap fun (_, p) => rt.tree.get? p)
+
 /-- The window's background, then the tree, then its open overlays. -/
 def present (rt : Runtime app) : Output app.Msg :=
   .request (.present (Scene.inBox rt.window [.fill rt.window rt.theme.background 0] ++
-    rt.tree.render rt.env ++ rt.tree.renderOverlays rt.env rt.window rt.router.refused.contains))
+    rt.tree.render rt.env ++ rt.overlayScene))
 
 /-- The tree as assistive technology sees it. -/
 def accessOut (rt : Runtime app) : Output app.Msg :=

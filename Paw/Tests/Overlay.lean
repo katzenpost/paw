@@ -120,7 +120,9 @@ def tests : TestM Unit := do
     ((rt.tree.findKey? "pop").map (·.viewport.height)).get!
   -- Drawing: the base leaves the popup out; overlays draw last.
   let base := rt.tree.render rt.env
-  let over := rt.tree.renderOverlays rt.env window
+  let over := rt.overlayScene
+  checkEq "the router draws the overlays the tree has" (rt.tree.overlays.map (·.id))
+    (rt.router.shown.toList.map (·.1))
   check "the base draws none of the popup"
     (base.items.all fun (_, d) => match d with
       | .text _ t _ => t.text != "One" | _ => true)

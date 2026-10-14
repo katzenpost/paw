@@ -98,10 +98,19 @@ def Widths.line (ws : Widths) (t : SafeText) : Int :=
 `maxLines`, and with the last cut short by an ellipsis if text was left out and it asks. -/
 def TextCfg.layout (cfg : TextCfg) (env : Env) (style : TextStyle) (width : Int) (lines : List SafeText) :
     List SafeText :=
-  let ws := Widths.of env style (lines ++ [SafeText.trusted ellipsisChar.toString])
-  let broken := if cfg.wrap then lines.flatMap fun l =>
-      if l.text.isEmpty then [l]
-      else (Wrap.wrap width ws.word ws.char l.text.toList).map (SafeText.trusted ∘ String.ofList)
+  -- Text neither wrapped nor cut short is shown as it is, up to its lines.
+  if !cfg.wrap && cfg.overflow == .clip then
+    match cfg.maxLines with
+    | some n => lines.take n
+    | none => lines
+  else
+  -- Words and characters are measured only for a line that does not fit: most text fits as it is.
+  let fits (t : SafeText) : Bool := (env.measure style t).1 ≤ width
+  let broken := if cfg.wrap && lines.any (!fits ·) then
+      let ws := Widths.of env style lines
+      lines.flatMap fun l =>
+        if l.text.isEmpty || fits l then [l]
+        else (Wrap.wrap width ws.word ws.char l.text.toList).map (SafeText.trusted ∘ String.ofList)
     else lines
   let shown := match cfg.maxLines with
     | some n => broken.take n
@@ -109,7 +118,10 @@ def TextCfg.layout (cfg : TextCfg) (env : Env) (style : TextStyle) (width : Int)
   let cut := shown.length < broken.length
   match cfg.overflow, shown.getLast? with
   | .ellipsis, some last =>
-    shown.dropLast ++ [SafeText.trusted (String.ofList (ellipsize ws.char width last.text.toList cut))]
+    if !cut && fits last then shown
+    else
+      let ws := Widths.of env style [last, SafeText.trusted ellipsisChar.toString]
+      shown.dropLast ++ [SafeText.trusted (String.ofList (ellipsize ws.char width last.text.toList cut))]
   | _, _ => shown
 
 /-- The height of a line of text in `style`. -/
@@ -140,11 +152,12 @@ def textBlock {Msg : Type} (lines : List SafeText) (cfg : TextCfg := {}) : Widge
     render := fun env _ v =>
       let st := style env
       let shown := cfg.layout env st v.width lines
-      let lh := lineHeight env st
       -- One line is centered in its box, as a label is; more go from the top.
       let items := match shown with
         | [t] => [centeredText env v v.x0 t st]
-        | _ => shown.zipIdx.map fun (t, k) => Draw.text ⟨v.x0, v.y0 + k * lh⟩ t st
+        | _ =>
+          let lh := lineHeight env st
+          shown.zipIdx.map fun (t, k) => Draw.text ⟨v.x0, v.y0 + k * lh⟩ t st
       Scene.inBox v items
     render_within := fun _ _ v => Scene.inBox_within v _
     access := fun _ _ => some { role := .label, name := joinLines lines } }

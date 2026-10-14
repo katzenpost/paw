@@ -34,6 +34,9 @@ attribute [instance] App.beq
 inductive AccessAction where
   | press
   | focus
+  /-- A step up, for a value in a range: delivered as the Up key, without a designation. -/
+  | increment
+  | decrement
   deriving Repr, DecidableEq, Inhabited
 
 inductive WindowEvent where
@@ -290,6 +293,10 @@ def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List
           ({ rt with router }, [], false)
         rt.settle before true outs
       else (rt, [])
+    | some _, .increment | some _, .decrement =>
+      let k := if action == .increment then Key.up else Key.down
+      let (rt, outs, _) := rt.deliver { target := id, event := .key k {} true }
+      rt.settle before true outs
     | none, _ => (rt, [])
   | .close => ({ rt with quit := true }, [])
 

@@ -104,6 +104,26 @@ inductive Role where
   | dialog
   /-- An image or icon, named by its description. -/
   | image
+  /-- One of a group of choices, of which one is chosen. -/
+  | radio
+  /-- A button that stays pressed or not. -/
+  | toggle
+  /-- A value in a range, moved by steps. -/
+  | slider
+  /-- A choice from a list that opens. -/
+  | comboBox
+  | list
+  | listItem
+  /-- A link to something outside the app. -/
+  | link
+  | separator
+  | tab
+  | tabList
+  /-- A number typed or stepped. -/
+  | spin
+  | dateInput
+  | timeInput
+  | colorWell
   deriving Repr, DecidableEq, Inhabited
 
 /-- How a widget describes itself to assistive technology such as a screen reader. Names and values
@@ -113,7 +133,10 @@ structure Access where
   role : Role
   name : SafeText := SafeText.empty
   value : Option SafeText := none
+  /-- Chosen, pressed or selected, for a role that can be. -/
   checked : Option Bool := none
+  /-- For a value in a range: its least, its greatest, and itself. -/
+  range : Option (Int × Int × Int) := none
   deriving Repr, DecidableEq, Inhabited
 
 /-- A widget as the tree holds it: functions over its state as a `Dynamic`. Widgets are written as

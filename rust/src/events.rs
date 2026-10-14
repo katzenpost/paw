@@ -208,6 +208,8 @@ pub struct AccessNode {
     pub value: Option<String>,
     /// 0 none, 1 unchecked, 2 checked.
     pub checked: u64,
+    /// For a value in a range: its least, greatest, and itself.
+    pub range: Option<(i64, i64, i64)>,
     pub focusable: bool,
     pub disabled: bool,
     pub bounds: crate::scene::Rect,
@@ -236,6 +238,7 @@ fn access_node(r: &mut Reader) -> Option<AccessNode> {
     let name = r.string()?;
     let value = if r.bool()? { Some(r.string()?) } else { None };
     let checked = r.nat()?;
+    let range = if r.bool()? { Some((r.int()?, r.int()?, r.int()?)) } else { None };
     let focusable = r.bool()?;
     let disabled = r.bool()?;
     let bounds = crate::scene::Rect { x0: r.int()?, y0: r.int()?, x1: r.int()?, y1: r.int()? };
@@ -244,7 +247,7 @@ fn access_node(r: &mut Reader) -> Option<AccessNode> {
     for _ in 0..n {
         children.push(r.nat()?);
     }
-    Some(AccessNode { id, role, name, value, checked, focusable, disabled, bounds, children })
+    Some(AccessNode { id, role, name, value, checked, range, focusable, disabled, bounds, children })
 }
 
 fn put_access_node(w: &mut Writer, n: &AccessNode) {
@@ -259,6 +262,12 @@ fn put_access_node(w: &mut Writer, n: &AccessNode) {
         None => w.bool(false),
     }
     w.nat(n.checked);
+    w.bool(n.range.is_some());
+    if let Some((lo, hi, v)) = n.range {
+        w.int(lo);
+        w.int(hi);
+        w.int(v);
+    }
     w.bool(n.focusable);
     w.bool(n.disabled);
     w.int(n.bounds.x0);
@@ -397,6 +406,7 @@ mod tests {
                     name: "Go".into(),
                     value: None,
                     checked: 0,
+                    range: Some((0, 10, 3)),
                     focusable: true,
                     disabled: false,
                     bounds: crate::scene::Rect { x0: 0, y0: 0, x1: 640, y1: 640 },

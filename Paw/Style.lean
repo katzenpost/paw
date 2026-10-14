@@ -167,12 +167,16 @@ structure ThemeData where
   button : Style
   checkbox : Style
   textField : Style
+  /-- A toggle, option button or tab, not chosen. -/
+  toggle : Style
+  /-- And chosen. -/
+  toggleOn : Style
   deriving Repr, DecidableEq, Inhabited
 
 namespace ThemeData
 
 /-- The styles of widgets that take focus. -/
-def controls (t : ThemeData) : List Style := [t.button, t.checkbox, t.textField]
+def controls (t : ThemeData) : List Style := [t.button, t.checkbox, t.textField, t.toggle, t.toggleOn]
 
 /-- Every text is readable on what it is drawn on, and every control's edge can be seen. -/
 def readable (t : ThemeData) : Bool :=
@@ -216,7 +220,14 @@ def lightData : ThemeData :=
   { background := gray 0xF4, surface := Color.white, text := gray 0x20, muted := gray 0x6B,
     accent := Color.rgb 0x2A 0x6F 0xDB, border := gray 0x8A,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
-    textField := { control .text with basic.radius := px 3, hover := {}, active := {} } }
+    textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
+    toggle := control .default
+    toggleOn := {
+      basic := { bg := Color.rgb 0xDC 0xE8 0xFB, fg := gray 0x20, border := Color.rgb 0x2A 0x6F 0xDB }
+      hover := { bg := some (Color.rgb 0xCD 0xDE 0xF9) }
+      focus := { border := some (Color.rgb 0x12 0x3A 0x80), borderWidth := some (px 2) }
+      active := { bg := some (Color.rgb 0xBE 0xD4 0xF6) }
+      disabled := { bg := some (gray 0xEB), fg := some (gray 0x5C), border := some (gray 0xC8) } } }
 
 def darkData : ThemeData :=
   let control (cursor : Cursor) : Style := {
@@ -228,7 +239,14 @@ def darkData : ThemeData :=
   { background := gray 0x1E, surface := gray 0x2B, text := gray 0xE6, muted := gray 0xA8,
     accent := Color.rgb 0x6C 0xA0 0xFF, border := gray 0x8A,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
-    textField := { control .text with basic.radius := px 3, hover := {}, active := {} } }
+    textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
+    toggle := control .default
+    toggleOn := {
+      basic := { bg := Color.rgb 0x24 0x40 0x6E, fg := gray 0xE6, border := Color.rgb 0x6C 0xA0 0xFF }
+      hover := { bg := some (Color.rgb 0x2B 0x4B 0x80) }
+      focus := { border := some (Color.rgb 0xC8 0xDC 0xFF), borderWidth := some (px 2) }
+      active := { bg := some (Color.rgb 0x32 0x55 0x90) }
+      disabled := { bg := some (gray 0x26), fg := some (gray 0x9A), border := some (gray 0x40) } } }
 
 /-- Dark text on light grays. -/
 def light : Theme := { lightData with contrast_ok := by decide +kernel, focus_visible := by decide +kernel }

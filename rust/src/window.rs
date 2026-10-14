@@ -151,6 +151,8 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
                 let action = match req.action {
                     accesskit::Action::Click => 0,
                     accesskit::Action::Focus => 1,
+                    accesskit::Action::Increment => 2,
+                    accesskit::Action::Decrement => 3,
                     _ => return,
                 };
                 self.events.push(WindowEvent::Access(req.target.0, action));

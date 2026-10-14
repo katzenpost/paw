@@ -63,6 +63,7 @@ def tests : TestM Unit := do
   let node : AccessNode :=
     { id := 2, access := field, bounds := Rect.ofXYWH 0 0 640 640, focusable := true, disabled := false, children := [] }
   check "an accessibility tree" (echoes (.access 2 [node, { node with id := 3, access := box }]))
+  check "with a value in a range" (echoes (.access 2 [{ node with access := { role := .slider, range := some (-5, 5, 2) } }]))
   let secret : AccessNode := { node with access := pw }
   let sent := (requestEnc (.access 0 [secret])).getD []
   let hasPw := (List.range sent.length).any fun i => ((sent.drop i).take 2 == ([112, 119] : List UInt8))

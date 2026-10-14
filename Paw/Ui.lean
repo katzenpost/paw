@@ -11,6 +11,7 @@ import Paw.Widgets.Scroll
 import Paw.Widgets.Overlay
 import Paw.Widgets.Anim
 import Paw.Widgets.Image
+import Paw.Widgets.Choice
 
 /-! # Building views
 
@@ -112,6 +113,35 @@ def popup (isOpen : Bool) (anchor content : Node Msg) (onDismiss : Msg) (key : O
     Node Msg :=
   let pop := Node.containerWith (popupWidget onDismiss) (padLayout (px 4)) [content]
   Node.container (box { expand := true }) (anchor :: if isOpen then [pop.overlay .popup] else []) key
+
+/-- A radio button for `value`, chosen when it is `current`. -/
+def radio {α : Type} [BEq α] (caption : String) (value current : α) (onChange : α → Msg)
+    (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.radio (SafeText.trusted caption) value current onChange) key
+
+/-- A button for `value`, pressed when it is `current`: one of a group. -/
+def optionButton {α : Type} [BEq α] (caption : String) (value current : α) (onChange : α → Msg)
+    (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.optionButton (SafeText.trusted caption) value current onChange) key
+
+/-- A button that stays pressed while `on`. -/
+def toggleButton (caption : String) (on : Bool) (onChange : Bool → Msg) (key : Option String := none) :
+    Node Msg :=
+  Node.leaf (Widgets.toggleButton (SafeText.trusted caption) on onChange) key
+
+/-- A line across the box, or down it if `vertical`. -/
+def separator (vertical : Bool := false) : Node Msg := Node.leaf (Widgets.separator vertical)
+
+/-- Pages, one shown at a time, chosen by a row of tabs: each page is its caption, the value that
+shows it, and the page. Pages not shown keep their state. -/
+def tabs {α : Type} [BEq α] (current : α) (onChange : α → Msg) (pages : List (String × α × Node Msg))
+    (key : Option String := none) : Node Msg :=
+  let bar := Node.containerWith tabBar (hstack (px 2)).toLayout
+    (pages.map fun (caption, a, _) => Node.leaf (Widgets.tab (SafeText.trusted caption) a current onChange) s!"tab-{caption}")
+  let stack := Node.container zstack (pages.map fun (caption, a, page) =>
+    let page := page.withInfo ({ · with key := some s!"page-{caption}" })
+    if a == current then page else page.hide)
+  col [bar, separator, stack] (px 2) key
 
 /-- `img`, fitted to its box by `fit`, described to assistive technology by `alt`, or marked as
 decoration. -/

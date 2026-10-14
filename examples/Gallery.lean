@@ -11,11 +11,29 @@ Every widget Paw has, in one window: a counter, a form with a password, a checkb
 rows keep their state as it changes, a scrolled text, two effects that need the user's choice:
 opening a link and copying, a menu in a popup that opens an alert and a confirmation, a tooltip,
 rows that fade in, a button disabled until it has something to do, a switch to the dark
-theme, icons, a picture made by a task, and notes of many lines. -/
+theme, icons, a picture made by a task, and notes of many lines; and on further tabs, the rest. -/
 
 namespace Gallery
 
 open Paw
+
+/-- The gallery's tabs. -/
+inductive Page where
+  | basics
+  | choices
+  deriving Repr, BEq, Inhabited
+
+inductive Size where
+  | small
+  | medium
+  | large
+  deriving Repr, BEq, Inhabited
+
+inductive Align where
+  | left
+  | center
+  | right
+  deriving Repr, BEq, Inhabited
 
 inductive Msg where
   | inc
@@ -39,6 +57,10 @@ inductive Msg where
   | dark (on : Bool)
   | loadPicture
   | notes (s : String)
+  | page (p : Page)
+  | size (s : Size)
+  | align (a : Align)
+  | bold (on : Bool)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -56,11 +78,16 @@ structure Model where
   dark : Bool := false
   picture : Option Image := none
   notes : String := ""
+  page : Page := .basics
+  size : Size := .medium
+  align : Align := .left
+  bold : Bool := false
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
     a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened &&
-    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture && a.notes == b.notes
+    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture && a.notes == b.notes && a.page == b.page && a.size == b.size &&
+    a.align == b.align && a.bold == b.bold
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -111,10 +138,27 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .loadPicture => emit (.task (.picture <$> sunset) (by decide))
   | _, .picture r => modify fun (m, cs) => ({ m with picture := r.toOption }, cs)
   | _, .notes s => modify fun (m, cs) => ({ m with notes := s }, cs)
+  | _, .page p => modify fun (m, cs) => ({ m with page := p }, cs)
+  | _, .size x => modify fun (m, cs) => ({ m with size := x }, cs)
+  | _, .align a => modify fun (m, cs) => ({ m with align := a }, cs)
+  | _, .bold on => modify fun (m, cs) => ({ m with bold := on }, cs)
 
-def view (m : Model) : Node Msg :=
-  Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
-  Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
+/-- Radio buttons, option buttons, a toggle button and separators. -/
+def choicesPage (m : Model) : Node Msg :=
+  Ui.col [
+    Ui.label "Size" (key := "sizeLabel"),
+    Ui.row [Ui.radio "Small" Size.small m.size .size "small", Ui.radio "Medium" Size.medium m.size .size "medium",
+      Ui.radio "Large" Size.large m.size .size "large"] (px 16),
+    Ui.separator,
+    Ui.label "Alignment",
+    Ui.row [Ui.optionButton "Left" Align.left m.align .align "left",
+      Ui.optionButton "Center" Align.center m.align .align "center",
+      Ui.optionButton "Right" Align.right m.align .align "right", Ui.separator (vertical := true),
+      Ui.toggleButton "Bold" m.bold .bold "bold"]] (px 8)
+
+/-- The first page: what the gallery had before it had tabs. -/
+def basicsPage (m : Model) : Node Msg :=
+  Ui.col [
     Ui.row [Ui.button "−" .dec "dec", Ui.label s!"count: {m.count}" "count", Ui.tooltip "Adds one to the count" (Ui.button "+" .inc "inc"),
       Ui.spacer, Ui.checkbox "Dark" m.dark .dark "dark",
       Ui.popup m.menu (Ui.button "More" (.menu true) "more")
@@ -134,7 +178,12 @@ def view (m : Model) : Node Msg :=
         Ui.width (px 56) (Ui.height (px 28) (Ui.image img (.text (SafeName.filter "A sunset")) .fill "picture")))),
     Ui.row [Ui.button "Open link" .openLink "link", Ui.button "Copy name" .copyName "copy",
       Ui.label s!"links opened: {m.opened}" "opened"],
-    Ui.textArea m.notes .notes { rows := 3, placeholder := SafeText.trusted "notes" } "notes"] ++
+    Ui.textArea m.notes .notes { rows := 3, placeholder := SafeText.trusted "notes" } "notes"]
+
+def view (m : Model) : Node Msg :=
+  Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
+  Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
+    Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m)]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")

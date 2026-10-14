@@ -19,6 +19,20 @@ fn role(r: u64) -> Role {
         6 => Role::Window,
         7 => Role::Dialog,
         8 => Role::Image,
+        9 => Role::RadioButton,
+        10 => Role::Button,
+        11 => Role::Slider,
+        12 => Role::ComboBox,
+        13 => Role::ListBox,
+        14 => Role::ListBoxOption,
+        15 => Role::Link,
+        16 => Role::Splitter,
+        17 => Role::Tab,
+        18 => Role::TabList,
+        19 => Role::SpinButton,
+        20 => Role::DateInput,
+        21 => Role::TimeInput,
+        22 => Role::ColorWell,
         _ => Role::GenericContainer,
     }
 }
@@ -43,17 +57,26 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
                     node.set_value(v.as_str());
                 }
             }
-            match n.checked {
-                1 => node.set_toggled(Toggled::False),
-                2 => node.set_toggled(Toggled::True),
+            // A tab or a list's item is selected; anything else that can be checked is toggled.
+            match (n.checked, n.role) {
+                (1 | 2, 14 | 17) => node.set_selected(n.checked == 2),
+                (1, _) => node.set_toggled(Toggled::False),
+                (2, _) => node.set_toggled(Toggled::True),
                 _ => {}
+            }
+            if let Some((lo, hi, v)) = n.range {
+                node.set_min_numeric_value(lo as f64);
+                node.set_max_numeric_value(hi as f64);
+                node.set_numeric_value(v as f64);
+                node.add_action(Action::Increment);
+                node.add_action(Action::Decrement);
             }
             node.set_bounds(Rect { x0: px(n.bounds.x0), y0: px(n.bounds.y0), x1: px(n.bounds.x1), y1: px(n.bounds.y1) });
             node.set_children(n.children.iter().map(|c| NodeId(*c)).collect::<Vec<_>>());
             if n.focusable {
                 node.add_action(Action::Focus);
             }
-            if matches!(n.role, 1 | 2) {
+            if matches!(n.role, 1 | 2 | 9 | 10 | 12 | 14 | 15 | 17) {
                 node.add_action(Action::Click);
             }
             if n.disabled {
@@ -79,6 +102,7 @@ pub fn empty(title: &str) -> TreeUpdate {
         name: String::new(),
         value: None,
         checked: 0,
+        range: None,
         focusable: false,
         disabled: false,
         bounds: crate::scene::Rect { x0: 0, y0: 0, x1: 0, y1: 0 },
@@ -98,6 +122,7 @@ mod tests {
             name: name.into(),
             value: value.map(Into::into),
             checked: 0,
+            range: None,
             focusable: role != 6,
             disabled: false,
             bounds: crate::scene::Rect { x0: 0, y0: 0, x1: 6400, y1: 1280 },

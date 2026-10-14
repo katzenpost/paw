@@ -96,8 +96,8 @@ def inputCodec : Codec Input :=
     (fun i => (i.kind, i.time, i.synthetic, i.obscured)) (fun _ => rfl)
 
 def accessActionCodec : Codec AccessAction :=
-  nat.refine (fun | 0 => some .press | 1 => some .focus | _ => none)
-    (fun | .press => 0 | .focus => 1) (by intro a; cases a <;> rfl)
+  nat.refine (fun | 0 => some .press | 1 => some .focus | 2 => some .increment | 3 => some .decrement | _ => none)
+    (fun | .press => 0 | .focus => 1 | .increment => 2 | .decrement => 3) (by intro a; cases a <;> rfl)
 
 def eventEnc : WindowEvent → List UInt8
   | .input i => nat.enc 0 ++ inputCodec.enc i
@@ -130,7 +130,9 @@ def eventCodec : Codec WindowEvent := { enc := eventEnc, dec := eventDec, roundt
 
 def roleTag : Role → Nat
   | .label => 0 | .button => 1 | .checkBox => 2 | .textInput => 3 | .passwordInput => 4
-  | .scrollView => 5 | .window => 6 | .dialog => 7 | .image => 8
+  | .scrollView => 5 | .window => 6 | .dialog => 7 | .image => 8 | .radio => 9 | .toggle => 10
+  | .slider => 11 | .comboBox => 12 | .list => 13 | .listItem => 14 | .link => 15 | .separator => 16
+  | .tab => 17 | .tabList => 18 | .spin => 19 | .dateInput => 20 | .timeInput => 21 | .colorWell => 22
 
 /-- An accessibility node as the Rust layer reads it. A password field's value is never sent. -/
 def accessNodeEnc (n : AccessNode) : List UInt8 :=
@@ -138,6 +140,9 @@ def accessNodeEnc (n : AccessNode) : List UInt8 :=
   nat.enc n.id ++ nat.enc (roleTag n.access.role) ++ string.enc n.access.name.text ++
     (match value with | some v => bool.enc true ++ string.enc v.text | none => bool.enc false) ++
     nat.enc (match n.access.checked with | none => 0 | some false => 1 | some true => 2) ++
+    (match n.access.range with
+      | some (lo, hi, v) => bool.enc true ++ int.enc lo ++ int.enc hi ++ int.enc v
+      | none => bool.enc false) ++
     bool.enc n.focusable ++ bool.enc n.disabled ++ Scene.rectCodec.enc n.bounds ++
     (list nat).enc n.children
 

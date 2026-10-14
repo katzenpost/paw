@@ -20,10 +20,15 @@ pub struct Text {
 }
 
 impl Text {
+    /// Only the bundled fonts, with a fixed locale, so that what is drawn is the same on every
+    /// machine. (`FontSystem::new_with_fonts` would also load the system's fonts.)
     pub fn bundled() -> Text {
-        let fonts = [REGULAR, BOLD].map(|b| cosmic_text::fontdb::Source::Binary(Arc::new(b.to_vec())));
-        let mut fs = FontSystem::new_with_fonts(fonts);
-        fs.db_mut().set_sans_serif_family("DejaVu Sans");
+        let mut db = cosmic_text::fontdb::Database::new();
+        for b in [REGULAR, BOLD] {
+            db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(b.to_vec())));
+        }
+        db.set_sans_serif_family("DejaVu Sans");
+        let fs = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
         Text { fs, cache: SwashCache::new() }
     }
 
@@ -89,6 +94,12 @@ mod tests {
         assert!(wb >= w2);
         let (w28, h28) = t.measure("aa", 28.0, false);
         assert!(w28 > w2 && h28 > h);
+    }
+
+    #[test]
+    fn only_the_bundled_fonts() {
+        let t = Text::bundled();
+        assert_eq!(t.fs.db().len(), 2, "the system's fonts must not be loaded");
     }
 
     #[test]

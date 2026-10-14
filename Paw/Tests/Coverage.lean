@@ -37,7 +37,10 @@ def routineInstance (env : Environment) (n : Name) : Bool :=
 instance. -/
 def handWritten (env : Environment) (n : Name) : Bool :=
   let user := (privateToUserName? n).getD n
-  !user.isInternalDetail && !user.hasMacroScopes && !isAuxRecursor env n && !isNoConfusion env n
+  let generated := user.components.any fun c =>
+    let c := c.toString
+    c.startsWith "match_" || c.startsWith "proof_" || c == "splitter"
+  !generated && !user.isInternalDetail && !user.hasMacroScopes && !isAuxRecursor env n && !isNoConfusion env n
     && !(env.isProjectionFn n) && !routineInstance env n
     && !(n.getString! == "ctorIdx" || n.getString! == "noConfusionType")
     && !(Meta.Match.Extension.getMatcherInfo? env n).isSome

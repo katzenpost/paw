@@ -18,5 +18,8 @@ def abiVersion : UInt32 := 1
 /-- Whether the linked Rust layer speaks the same byte formats. -/
 def abiMatches : Bool := rustAbiVersion () == abiVersion
 
+/-- The Rust layer decodes a scene and encodes it again; empty if it does not decode. -/
+@[extern "paw_scene_echo"] opaque sceneEcho : @& ByteArray → ByteArray
+
 end Paw.Ffi
 

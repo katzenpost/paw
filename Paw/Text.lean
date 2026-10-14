@@ -142,7 +142,10 @@ structure SafeText where
   text : String
   ok : text.toList.all allowed = true
 
-instance : BEq SafeText := ⟨fun a b => a.text == b.text⟩
+instance : DecidableEq SafeText := fun a b =>
+  if h : a.text = b.text then isTrue (by cases a; cases b; simp_all)
+  else isFalse (fun e => h (e ▸ rfl))
+
 instance : Repr SafeText := ⟨fun s _ => repr s.text⟩
 instance : Inhabited SafeText := ⟨⟨"", rfl⟩⟩
 
@@ -180,7 +183,10 @@ structure SafeName where
   text : String
   ok : text.toList.all allowedInName = true
 
-instance : BEq SafeName := ⟨fun a b => a.text == b.text⟩
+instance : DecidableEq SafeName := fun a b =>
+  if h : a.text = b.text then isTrue (by cases a; cases b; simp_all)
+  else isFalse (fun e => h (e ▸ rfl))
+
 instance : Repr SafeName := ⟨fun s _ => repr s.text⟩
 
 namespace SafeName

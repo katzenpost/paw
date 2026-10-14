@@ -53,6 +53,20 @@ The FFI boundary passes plain data, with no callbacks into widget code:
 - Rust sends input events with platform flags (synthetic, obscured), window changes and measurement results.
 - Lean sends a Scene to draw and requests such as setting a title, writing the clipboard or opening a picker.
 
+The byte formats are built from `Codec α`, a structure that carries its own law, the same pattern as the widget laws below:
+
+```lean
+structure Codec (α : Type) where
+  enc : α → List UInt8
+  dec : List UInt8 → Option (α × List UInt8)
+  roundtrip : ∀ a rest, dec (enc a ++ rest) = some (a, rest)
+```
+
+- **Primitives.** Natural numbers are LEB128 varints, and integers zigzag varints.
+- **Combinators.** Pairs, lists and refinements build codecs from codecs. A codec for `Scene` gets its round trip from its fields' codecs.
+- **Decoding refuses rather than guesses.** A `SafeText` decodes only if every character passes the allowlist, so bytes from Rust cannot smuggle in a character Lean would have refused.
+- **The Rust side is checked by tests, not proofs.** The proofs are about Lean's encoder and decoder. Rust's copy of the format is checked by echo functions: Rust decodes what Lean encoded and encodes it again, and a test compares the bytes on random values.
+
 Layout needs one call into Rust: measuring shaped text. It is declared `@[extern]` and treated as a pure function of font, size and text, with results cached by the core.
 
 ## What Paw keeps from monomer

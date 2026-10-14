@@ -1,0 +1,314 @@
+# Paw Design
+
+*This document was written by an LLM that read the monomer source code and the CryptWalker sources cited below. It is not the original work of a human author.*
+
+Paw is an Elm-style GUI library for Lean, for Linux desktop and Android. Its design follows [monomer](https://github.com/fjvallarino/monomer), a Haskell GUI library. Its security rules are in [GUI_SECURITY_GUIDELINES.md](GUI_SECURITY_GUIDELINES.md), and this document says how Paw enforces them. Where a rule can be stated as a proposition, Paw states it in a type, so that a widget, a layout or a component that breaks it does not compile.
+
+## Why Lean, and why monomer
+
+Monomer's design depends on what Haskell offers:
+
+- widgets as records of functions;
+- internal state hidden behind existential types;
+- effects returned as data from pure code;
+- monads to thread state through event handling.
+
+A GUI library written in Rust is built from other parts: trait objects, interior mutability and callbacks. Translating one of those into Lean would lose the parts of the design that make it reusable. Lean has everything monomer uses, and it also has dependent types. A structure can carry propositions about its own fields, and those propositions must be proved for every instance.
+
+CryptWalker already relies on this. `NIKE` carries `commutes` and `derive_safe`, and `KEM` carries `honestRoundTrip`. `kemOfNike` in `KEM/Adapter.lean` builds a `KEM` from any `NIKE`, and it discharges `honestRoundTrip` from the NIKE's `commutes`. So each composed scheme inherits correctness from its parts with no further work by whoever composes them. Paw applies the same pattern to a GUI:
+
+- a widget carries the proof that it draws inside its box;
+- a layout carries the proof that it places children inside its own box;
+- a container built from the two gets its proof from theirs.
+
+## Architecture
+
+```
+┌──────────────────────── Lean ───────────────────────────────────────┐
+│  App components:  Model, Msg, update (UpdateM), view                │
+│  Pure core:       widget tree, merge, layout, hit-testing, Scene    │
+│  Runtime loop:    event queue, routing, designations, tasks         │
+└────────────▲───────────────────────────────────┬────────────────────┘
+             │ input events, measurements         │ Scene, platform requests
+┌────────────┴─────────── Rust (FFI) ─────────────▼───────────────────┐
+│  window and input, IME, text shaping, drawing, accessibility,       │
+│  clipboard, portals, Android activity and JNI                       │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Lean** holds everything that decides what the user sees and what the app may do. This covers the app's model and update, the widget tree and its merge, layout, hit-testing, focus, and the display list. All of it is pure except the runtime loop, so the laws below are theorems about the code that actually runs.
+
+**Rust** holds what talks to the platform:
+
+| Concern | Candidates |
+| --- | --- |
+| Windows, input, IME, Android lifecycle | winit with android-activity |
+| Text shaping and measuring | parley or cosmic-text |
+| Drawing a Scene | vello on the GPU, tiny-skia on the CPU |
+| Accessibility | AccessKit |
+| File chooser, opening links, screen capture | xdg-desktop-portal (ashpd); Storage Access Framework and intents through JNI |
+
+The FFI boundary passes plain data, with no callbacks into widget code:
+
+- Rust sends input events with platform flags (synthetic, obscured), window changes and measurement results.
+- Lean sends a Scene to draw and requests such as setting a title, writing the clipboard or opening a picker.
+
+Layout needs one call into Rust: measuring shaped text. It is declared `@[extern]` and treated as a pure function of font, size and text, with results cached by the core.
+
+## What Paw keeps from monomer
+
+| Concept | In monomer | In Paw |
+| --- | --- | --- |
+| Widget interface | `Widget s e`, a record of init, merge, dispose, event and message handling, size request, resize, render (`Core/WidgetTypes.hs`) | The same record, with law fields and a pure render |
+| Three layers | `Single` for leaves, `Container` for children, `Composite` for model and handler; `startApp` is a Composite at the root | The same; an app is a component at the root |
+| Effects as data | Every operation returns a node and a list of `WidgetRequest`s | Operations return a node and a list of `Cmd`s, typed by capability and origin |
+| Rebuild and merge | The view is rebuilt from the model; `mergeChildSeq` pairs old and new children by position, then by key; unmatched new ones are initialized, unmatched old ones disposed (`Widgets/Container.hs`) | The same algorithm, with keys of the app's own type and unique among siblings |
+| Skipping unchanged components | A Composite rebuilds only when its model changed (`mergeRequired`) | The same; models need `BEq` |
+| Identity | `Path` (child indices), `WidgetKey` (user text), `WidgetId` (creation time and path), with a runtime table from id to current path | `Path` and `WidgetId` as in monomer; keys are `ObjId`s assigned by the app |
+| Layout | `SizeReq {fixed, flex, extra, factor}` per axis; `assignStackAreas` gives fixed sizes, shrinks flex in proportion, then shares extra space by factor (`Widgets/Containers/Stack.hs`) | The same algorithm over integers, with its laws proved |
+| Event routing | Keys, text and clipboard go to the focused path; press, move and wheel go to the widget under the point; overlays become the root for hit-testing; a `Click` needs press and release on the same widget (`Main/Handlers.hs`) | The same, plus the checks from the security guidelines before a designation is made |
+| Rendering | Only on request: input, `RenderOnce`, `RenderEvery`; overlays drawn after the main pass | The same; the Scene is sent to Rust only when a render is needed |
+| Tasks and producers | `Task (IO e)` for one result, `Producer` for a stream, both delivered to the widget that started them | The same, delivered with origin `result` and checked against the current tree |
+
+## What Paw changes
+
+| In monomer | In Paw | Why |
+| --- | --- | --- |
+| `render` is `IO ()` that drives NanoVG | `render` returns a `Scene`, a pure display list | Drawing becomes something laws can be stated about |
+| Coordinates are `Double` | Integer units (for example 1/64 px) | Ordering laws on integers are decidable and `omega` proves them |
+| Clipping is opt-in (`singleUseScissor = False`) | Every widget has a law that its Scene lies within its box | Text and images from elsewhere cannot draw over neighbours |
+| One `WidgetRequest` type where any widget can run IO or write the clipboard | `Cmd caps origin`: effects need a capability and a designation | Authority follows the user's choice and the component's declared capabilities |
+| Task results and input arrive as the same event type | Messages arrive with an `Origin` | The rule "effects come from user actions" becomes a type |
+| `WidgetKey` is any `Text`, and duplicates are undefined | Keys are `ObjId`s, unique among siblings by a proof | Content cannot choose a key that takes over another widget's state |
+| `Typeable` and `cast` for widget state and messages | Typed messages mapped between components; widget state through `Dynamic`, compared only after widget types match | Lean's types replace runtime casts where possible |
+| Lenses into the parent model | A `Field σ α` structure with get and set and the lens laws as fields | Same pattern as the other laws |
+| SDL2 and NanoVG through OpenGL | The Rust layer above | Wayland, Android and accessibility support |
+
+## Laws in types
+
+The definitions in this section are taken from a sketch that typechecks with Lean 4.33.1, using no axioms beyond `propext`, `Classical.choice` and `Quot.sound`.
+
+### Geometry
+
+```lean
+structure Rect where
+  x0 : Int
+  y0 : Int
+  x1 : Int
+  y1 : Int
+
+def Rect.Within (a b : Rect) : Prop :=
+  b.x0 ≤ a.x0 ∧ b.y0 ≤ a.y0 ∧ a.x1 ≤ b.x1 ∧ a.y1 ≤ b.y1
+
+theorem Rect.Within.trans {a b c : Rect} (h₁ : a.Within b) (h₂ : b.Within c) : a.Within c := by
+  unfold Rect.Within at *; omega
+
+def Rect.inter (a b : Rect) : Rect :=
+  ⟨max a.x0 b.x0, max a.y0 b.y0, min a.x1 b.x1, min a.y1 b.y1⟩
+
+theorem Rect.inter_within (a b : Rect) : (a.inter b).Within b := by
+  simp only [Rect.Within, Rect.inter]; omega
+```
+
+`Within` is decidable, so a test can check it on concrete values too.
+
+### Text from elsewhere
+
+`SafeText` carries the proof that every character passed the allowlist. The only way to get one from an arbitrary string is the filter, which proves it:
+
+```lean
+structure SafeText where
+  text : String
+  ok : text.toList.all allowed = true
+
+def SafeText.filter (s : String) : SafeText :=
+  ⟨String.ofList (s.toList.map fun c => if allowed c then c else substitute), by
+    simp only [String.toList_ofList, List.all_map, List.all_eq_true]
+    intro c _
+    simp only [Function.comp]
+    split <;> simp_all [substitute, allowed]⟩
+```
+
+Widgets that draw text accept only `SafeText`. The full allowlist and the treatment of bidi, invisible and confusable characters follow the guidelines, and each rule there that is a property of characters becomes a conjunct of `ok`.
+
+### Scenes and clipping
+
+A Scene is a list of draw items, each with the clip it is drawn under:
+
+```lean
+inductive Draw where
+  | fill (r : Rect) (rgba : UInt32)
+  | text (x y : Int) (t : SafeText)
+
+structure Scene where
+  items : List (Rect × Draw)
+
+def Scene.Within (s : Scene) (v : Rect) : Prop := ∀ i ∈ s.items, i.1.Within v
+
+def Scene.clip (v : Rect) (s : Scene) : Scene := ⟨s.items.map fun (r, d) => (r.inter v, d)⟩
+
+theorem Scene.clip_within (v : Rect) (s : Scene) : (s.clip v).Within v
+```
+
+A leaf widget whose drawing depends on content, such as a label or an image, ends its render with `Scene.clip`, and `clip_within` discharges its law.
+
+### Widgets and layouts compose their laws
+
+```lean
+structure Widget where
+  sizeReq : SizeReq × SizeReq
+  render : Rect → Scene
+  render_within : ∀ v, (render v).Within v
+
+structure Layout where
+  assign : Rect → List (SizeReq × SizeReq) → List Rect
+  assign_length : ∀ v rs, (assign v rs).length = rs.length
+  assign_within : ∀ v rs, ∀ r ∈ assign v rs, r.Within v
+
+def Layout.render (l : Layout) (kids : List Widget) (v : Rect) : Scene :=
+  ⟨((kids.zip (l.assign v (kids.map (·.sizeReq)))).map fun (w, r) => (w.render r).items).flatten⟩
+
+theorem Layout.render_within (l : Layout) (kids : List Widget) (v : Rect) :
+    (l.render kids v).Within v := by
+  intro i hi
+  simp only [Layout.render, List.mem_flatten, List.mem_map] at hi
+  obtain ⟨_, ⟨⟨w, r⟩, hwr, rfl⟩, hi⟩ := hi
+  exact (w.render_within r i hi).trans (l.assign_within v _ r (List.of_mem_zip hwr).2)
+
+def Layout.container (l : Layout) (req : SizeReq × SizeReq) (kids : List Widget) : Widget where
+  sizeReq := req
+  render := l.render kids
+  render_within := l.render_within kids
+```
+
+This is the `kemOfNike` pattern. `Layout.container` builds a `Widget` from a layout and any children, and fills `render_within` from the children's `render_within` and the layout's `assign_within`, joined by transitivity. A stack of grids of labels is clipped to the window because each part is, and nobody writes that proof for the stack, the grid or the app.
+
+The full `Widget` record also has monomer's merge, event, message and dispose functions. The law fields grow with it:
+
+| Structure | Law | Guideline it enforces |
+| --- | --- | --- |
+| `Widget` | `render_within`: the Scene lies inside the box | Text stays inside its box; content cannot draw over chrome |
+| `Layout` | `assign_within`; `assign_length` | Children stay inside their parent |
+| `Layout` for stack and grid | `assign_disjoint`: children's boxes do not overlap | Reserved regions cannot be covered by a sibling |
+| `Widget` | `hit_agrees`: the widget hit-testing returns at a point is the topmost one whose Scene covers it | The user clicks what they see |
+| `Widget` | `focus_valid`: focus moves only to visible, enabled, focusable widgets | Focus is the user's |
+| `Merge` | `merge_types`: merge pairs only widgets of the same type, and keys only with equal keys | State is never handed to another widget |
+| `Field σ α` | `get_set`, `set_get`, `set_set` | Updates through a field change only that field |
+
+Overlap is sometimes wanted, as in a z-stack or a popup. Those layouts do not carry `assign_disjoint`. A container that needs reserved regions accepts only layouts that do, which is a type constraint on the container.
+
+### Authority and origin
+
+Effects that use authority need two things: a capability the component declared, and a designation from the input event being handled.
+
+```lean
+inductive Cap where
+  | clipboardWrite | openUri | openFile | notify
+
+structure Designation where
+  private mk ::
+  serial : Nat
+  target : ObjId
+
+inductive Origin where
+  | input (d : Designation)
+  | result
+
+inductive Effect : Cap → Type where
+  | setClipboard (obj : ObjId) (t : SafeText) : Effect .clipboardWrite
+  | openUri (obj : ObjId) (uri : String) : Effect .openUri
+
+inductive Cmd (caps : List Cap) : Origin → Type where
+  | render : Cmd caps o
+  | effect {c} (d : Designation) (e : Effect c) (granted : c ∈ caps)
+      (designated : e.target = d.target) : Cmd caps (.input d)
+```
+
+How these types enforce the rules:
+
+- **Only the runtime makes designations.** `Designation`'s constructor is private to the runtime module. The runtime creates one only after hit-testing has found the target and the checks in the guidelines have passed:
+  - the target was visible, enabled and unmoved for long enough;
+  - the touch was not obscured by another app's overlay;
+  - the event was not synthetic.
+- **A command is tied to the event being handled.** The command type is indexed by the origin of that event. An `effect` exists only in `Cmd caps (.input d)`, for the `d` of that event and for an object equal to its target. A designation kept in the model from an earlier event has the wrong index, so it cannot authorize anything later.
+- **Results cannot use authority.** This is a theorem, proved by case analysis:
+
+  ```lean
+  theorem Cmd.result_no_authority (cmd : Cmd caps .result) : ¬ cmd.UsesAuthority
+  ```
+
+- **Capabilities compose by inclusion.** A parent embeds a child component only with a proof that the child's capabilities are among its own. `decide` proves this for concrete lists. The child's commands are lifted with:
+
+  ```lean
+  def Cmd.lift (sub : caps ⊆ caps') : Cmd caps o → Cmd caps' o
+  ```
+
+  So the capabilities an app declares at its root bound everything every nested component can do. This is the same transitive pattern as the clipping law.
+
+### The update monad
+
+`update` runs in a state monad over the model and the commands emitted so far, indexed by the event's origin:
+
+```lean
+abbrev UpdateM (σ : Type) (caps : List Cap) (o : Origin) := StateM (σ × Array (Cmd caps o))
+
+def emit (c : Cmd caps o) : UpdateM σ caps o Unit := modify fun (s, cs) => (s, cs.push c)
+
+structure Component (caps : List Cap) where
+  Model : Type
+  Msg : Type
+  update : (o : Origin) → Msg → UpdateM Model caps o Unit
+```
+
+Handlers are written in `do` notation with `modify`, `get` and `emit`. Properties of a particular handler, such as "removing an item leaves the others in order", can be stated as `Std.Do` triples about `update`, as `KEM.lean` states `generate_ok` and `decap_ok`.
+
+### Keys
+
+```lean
+structure Children (α : Type) where
+  nodes : List (Option ObjId × α)
+  keys_nodup : (nodes.filterMap (·.1)).Nodup
+```
+
+Keys are the app's own identifiers, never text from elsewhere, and duplicates among siblings do not typecheck. `decide` proves `keys_nodup` for literal lists. A view built from a model collection gets the proof from the collection's own invariant, such as a map's keys being unique.
+
+### Secrets
+
+`Secret` has a private constructor and no `ToString`, `Repr` or conversion to `SafeText`. Only widgets made to show secrets accept it, such as a passphrase field drawing dots. Message recording, model snapshots and logging require `Repr`, so a model holding a `Secret` cannot be passed to them by mistake.
+
+## What the proofs do not cover
+
+Each law is about the Lean side. Some guarantees also depend on things outside it:
+
+- **Rust honours the Scene.** It must draw each item under its clip. That code is small and is tested against the Scene directly.
+- **Measured text matches drawn text.** Layout trusts the measurement call, and the clip law keeps a wrong measurement from drawing outside the box.
+- **Platform flags are truthful.** The obscured and synthetic flags come from the platform. On X11, input injected through XTEST is indistinguishable from real input.
+- **`IO` is ambient authority.** A task is arbitrary `IO`, and Lean does not confine it. Capabilities govern effects the runtime performs. Running a task is itself a capability, `io`, which the root grants to the app's own components and withholds from components that do not need it. Paw provides narrow effects (fetch a URL, read a designated file) so that most components never need `io`.
+- **Private constructors are a module boundary.** They stop accidents and code outside the runtime module, not code that uses `unsafe` features.
+
+## Runtime loop
+
+One cycle, as in monomer's `mainLoop`:
+
+1. Take the platform events Rust has queued, and the results of finished tasks.
+2. For each input event, find its target: the focused path, or the hit-test result for the point, starting from the overlay if there is one. Apply the checks and make a `Designation` if they pass. Then deliver it to the target with origin `input d`.
+3. For each task result, look up its `WidgetId`, drop it if the widget is gone, and deliver it with origin `result`.
+4. Run `update`. Run `view` and merge if the model changed, and lay out again where sizes were requested.
+5. Perform the commands. Effects go to Rust as requests, and tasks start with `IO.asTask`.
+6. If a render was requested, build the Scene and send it to Rust.
+
+## Testing
+
+Tests run in this order:
+
+1. **Pure, in-process tests of the core.** Build widget trees, feed events through the runtime loop with a fake platform, and assert on the Scene, the commands and the model.
+2. **Property tests** of what the types do not already state, such as merge preserving widget state across reordering.
+3. **FFI tests** of the Rust layer against recorded Scenes and events.
+4. **On-device runs** on a Wayland compositor, an X11 session and Android, using the corpus from the security guidelines.
+
+## Sources
+
+- [monomer](https://github.com/fjvallarino/monomer) at commit 5c62393: `src/Monomer/Core/WidgetTypes.hs`, `Main/Core.hs`, `Main/Handlers.hs`, `Widgets/Composite.hs`, `Widgets/Container.hs`, `Widgets/Containers/Stack.hs`, `Graphics/Types.hs`, and its tutorials
+- CryptWalker: `CryptWalker/NIKE/NIKE.lean`, `CryptWalker/KEM/KEM.lean`, `CryptWalker/KEM/Adapter.lean`
+- [The Elm Architecture](https://guide.elm-lang.org/architecture/)
+- [GUI_SECURITY_GUIDELINES.md](GUI_SECURITY_GUIDELINES.md)

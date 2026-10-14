@@ -58,6 +58,32 @@ def tests : TestM Unit := do
   let (rt, outs) := click rt "copy" 8000
   checkEq "the name is copied" [Request.setClipboard (SafeText.filter "Ada")]
     ((requests outs).filter fun | .setClipboard _ => true | _ => false)
+  -- Assistive technology.
+  let tree := rt.tree.accessTree rt.env
+  let named (r : Role) (n : String) := tree.any fun a => a.access.role == r && a.access.name.text == n
+  check "the window is the root" ((tree.head?.map (·.access.role)) == some .window)
+  check "buttons by their captions" (named .button "Add" && named .button "Open link")
+  check "a check box with its state" (tree.any fun a => a.access.role == .checkBox && a.access.checked == some false)
+  check "a text field with its value" (tree.any fun a => a.access.role == .textInput &&
+    a.access.value.map (·.text) == some "Ada")
+  check "a password field" (tree.any fun a => a.access.role == .passwordInput)
+  check "every node's children are nodes of the tree"
+    (tree.all fun a => a.children.all fun c => tree.any (·.id == c))
+  check "frames carry the tree" ((requests (rt.step (.resize (px 640) (px 560)) 8500).2).any
+    fun | .access .. => true | _ => false)
+  let linkId := (rt.tree.findKey? "link").map (·.id) |>.getD ⟨0⟩
+  let incId := (rt.tree.findKey? "inc").map (·.id) |>.getD ⟨0⟩
+  let before := rt.model.count
+  let (rt, _) := rt.step (.access incId .press) 8600
+  checkEq "a screen reader can press a button" (before + 1) rt.model.count
+  let (rt, outs) := rt.step (.access linkId .press) 8700
+  checkEq "but its press designates nothing, so the link stays closed" []
+    ((requests outs).filter fun | .openUri _ => true | _ => false)
+  let nameId := (rt.tree.findKey? "name").map (·.id) |>.getD ⟨0⟩
+  let (rt, _) := rt.step (.access nameId .focus) 8800
+  checkEq "a screen reader can move focus" (some nameId) rt.router.focused
+  let (rt, outs) := rt.step (.access ⟨99999⟩ .press) 8850
+  checkEq "an unknown widget is ignored" 0 outs.length
   let (rt, outs) := step rt (.key (.char 'q') { ctrl := true } true) 9000
   check "ctrl-q quits" (rt.quit && (requests outs).contains .quit)
 

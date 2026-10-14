@@ -58,6 +58,17 @@ inductive Node (Msg : Type) where
   argument `same` holds equal. -/
   | private deferred (info : NodeInfo) (arg : Dynamic) (same : Dynamic → Bool) (build : Unit → Node Msg)
 
+/-- A node of the accessibility tree: a widget that describes itself, with the nearest such widgets
+below it as its children. -/
+structure AccessNode where
+  id : Nat
+  access : Access
+  bounds : Rect
+  focusable : Bool
+  disabled : Bool
+  children : List Nat
+  deriving Repr, DecidableEq, Inhabited
+
 /-- A node's kind, key and visibility, and its children's, without state. -/
 inductive Shape where
   | mk (kind : String) (key : Option String) (visible : Bool) (children : List Shape)
@@ -602,6 +613,35 @@ def placementsList : List (Node Msg) → List (WidgetId × Rect)
   | [] => []
   | c :: cs => placements c ++ placementsList cs
 end
+
+mutual
+/-- The accessibility nodes at and under `n`, added to `acc`, and the ids of the topmost of them:
+widgets that describe themselves, with containers that do not left out. -/
+def accessFrom (env : Env) : Node Msg → Array AccessNode → Array AccessNode × List Nat
+  | n@(mk w st i _ cs), acc =>
+    if !i.visible then (acc, [])
+    else match w.access (envAt env i) st with
+      | some a =>
+        let (acc, kids) := accessList env cs acc
+        (acc.push { id := i.id.n, access := a, bounds := i.viewport, focusable := n.focusable,
+                    disabled := !i.enabled, children := kids }, [i.id.n])
+      | none => accessList env cs acc
+  | deferred .., acc => (acc, [])
+
+def accessList (env : Env) : List (Node Msg) → Array AccessNode → Array AccessNode × List Nat
+  | [], acc => (acc, [])
+  | c :: cs, acc =>
+    let (acc, k1) := accessFrom env c acc
+    let (acc, k2) := accessList env cs acc
+    (acc, k1 ++ k2)
+end
+
+/-- The tree as assistive technology sees it: a window, id 0, over the widgets that describe
+themselves. -/
+def accessTree (env : Env) (n : Node Msg) : List AccessNode :=
+  let (nodes, top) := accessFrom env n #[]
+  { id := 0, access := { role := .window }, bounds := n.viewport, focusable := false,
+    disabled := false, children := top } :: nodes.toList
 
 end Node
 

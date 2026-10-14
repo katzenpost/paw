@@ -93,10 +93,15 @@ def inputCodec : Codec Input :=
   (pair kindCodec (pair nat (pair bool bool))).map (fun (k, t, s, o) => ⟨k, t, s, o⟩)
     (fun i => (i.kind, i.time, i.synthetic, i.obscured)) (fun _ => rfl)
 
+def accessActionCodec : Codec AccessAction :=
+  nat.refine (fun | 0 => some .press | 1 => some .focus | _ => none)
+    (fun | .press => 0 | .focus => 1) (by intro a; cases a <;> rfl)
+
 def eventEnc : WindowEvent → List UInt8
   | .input i => nat.enc 0 ++ inputCodec.enc i
   | .resize w h => nat.enc 1 ++ int.enc w ++ int.enc h
   | .close => nat.enc 2
+  | .access id a => nat.enc 3 ++ nat.enc id.n ++ accessActionCodec.enc a
 
 def eventDec (bs : List UInt8) : Option (WindowEvent × List UInt8) := do
   let (tag, bs) ← nat.dec bs
@@ -104,14 +109,31 @@ def eventDec (bs : List UInt8) : Option (WindowEvent × List UInt8) := do
   | 0 => let (i, bs) ← inputCodec.dec bs; pure (.input i, bs)
   | 1 => let (w, bs) ← int.dec bs; let (h, bs) ← int.dec bs; pure (.resize w h, bs)
   | 2 => pure (.close, bs)
+  | 3 =>
+    let (id, bs) ← nat.dec bs
+    let (a, bs) ← accessActionCodec.dec bs
+    pure (.access ⟨id⟩ a, bs)
   | _ => none
 
 theorem event_roundtrip (e : WindowEvent) (rest : List UInt8) :
     eventDec (eventEnc e ++ rest) = some (e, rest) := by
   cases e <;> simp [eventEnc, eventDec, List.append_assoc, nat.roundtrip, inputCodec.roundtrip,
-    int.roundtrip]
+    int.roundtrip, accessActionCodec.roundtrip]
 
 def eventCodec : Codec WindowEvent := ⟨eventEnc, eventDec, event_roundtrip⟩
+
+def roleTag : Role → Nat
+  | .label => 0 | .button => 1 | .checkBox => 2 | .textInput => 3 | .passwordInput => 4
+  | .scrollView => 5 | .window => 6
+
+/-- An accessibility node as the Rust layer reads it. A password field's value is never sent. -/
+def accessNodeEnc (n : AccessNode) : List UInt8 :=
+  let value := if n.access.role == .passwordInput then none else n.access.value
+  nat.enc n.id ++ nat.enc (roleTag n.access.role) ++ string.enc n.access.name.text ++
+    (match value with | some v => bool.enc true ++ string.enc v.text | none => bool.enc false) ++
+    nat.enc (match n.access.checked with | none => 0 | some false => 1 | some true => 2) ++
+    bool.enc n.focusable ++ bool.enc n.disabled ++ Scene.rectCodec.enc n.bounds ++
+    (list nat).enc n.children
 
 /-- A request other than drawing, as the Rust layer reads it. -/
 def requestEnc : Request → Option (List UInt8)
@@ -121,6 +143,7 @@ def requestEnc : Request → Option (List UInt8)
   | .openUri u => some (nat.enc 2 ++ string.enc u)
   | .notify t b => some (nat.enc 3 ++ string.enc t.text ++ string.enc b.text)
   | .quit => some (nat.enc 4)
+  | .access focus nodes => some (nat.enc 5 ++ nat.enc focus ++ nat.enc nodes.length ++ nodes.flatMap accessNodeEnc)
 
 /-- Text measured by the Rust layer, with the fonts it draws with. -/
 def measure (style : TextStyle) (t : SafeText) : Int × Int :=

@@ -47,7 +47,7 @@ CryptWalker already relies on this. `NIKE` carries `commutes` and `derive_safe`,
 | Text shaping, measuring, drawing | cosmic-text, with DejaVu Sans bundled | Measuring and drawing use one font system, so text is drawn as wide as layout measured it. Offscreen renders use only the bundled fonts; a window adds the system's for characters they lack |
 | Clipboard | arboard, with Wayland's data-control protocol | The clipboard is read only when the user presses Ctrl-V, which becomes a `paste` event |
 | Opening links, notifications | `xdg-open` and `notify-send`, run with the link or text as arguments, never through a shell | Lean has already checked the link |
-| Accessibility | AccessKit | |
+| Accessibility | AccessKit 0.21 with `accesskit_winit` 0.29, over AT-SPI | Widgets describe themselves in Lean; Rust only passes the tree on |
 
 Some platform facts the guidelines rely on, as they stand on Linux:
 
@@ -362,6 +362,13 @@ One step for input, as in monomer's `mainLoop`:
 `Runtime.run` is the IO loop around `step`, over a `Platform`, a structure of IO functions: poll events, the time, the window size, measure text, perform a request. The Rust layer provides one, and tests a scripted fake. Tasks run with `IO.asTask`; their results are stepped in with origin `other`.
 
 Nodes, trees and the runtime must be in `Type` for `IO` to hold them. So a widget keeps its state as a `Dynamic`. Widgets are still written over their own state type, as a `Widget.Spec Msg σ` whose `build` wraps each function, and `render_within` carries through the wrapping.
+
+## Accessibility
+
+A widget may describe itself with an `Access`: a role (label, button, check box, text input, password input, scroll view), a name, and a value or checked state. Names and values are `SafeText`, filtered as anything on screen is, because a screen reader speaks them in the same voice as the app's own words. `Node.accessTree` flattens the tree into what assistive technology sees: a window over the widgets that describe themselves, with containers that do not left out. Each frame sends it beside the scene, and the Rust layer hands it to AccessKit.
+
+- **A password field has a role and no value.** Lean never sends its value, and the Rust layer would drop one if it came.
+- **A screen reader's actions designate nothing.** AccessKit's action requests come back as `WindowEvent.access`: a press is delivered to the widget as a click, and a focus moves focus. AT-SPI is a session bus that any program on it can talk to, so a press from it is no evidence of the user's choice, and it carries no designation: it cannot open a link or write the clipboard. A screen reader user keeps full authority through the keyboard, which is real input: Tab to the widget, then Enter.
 
 ## Performance
 

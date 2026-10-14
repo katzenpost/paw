@@ -31,7 +31,8 @@ def sample : List WindowEvent := [
   input (.paste "a\nb") 9,
   .input { kind := .leaveWindow, time := 10, synthetic := true, obscured := true },
   .resize 64000 48000,
-  .close]
+  .close,
+  .access ⟨7⟩ .focus]
 
 def echoes (r : Request) : Bool :=
   match requestEnc r with
@@ -42,7 +43,7 @@ def isPng (b : ByteArray) : Bool := b.size > 8 && b.data.toList.take 4 == [0x89,
 
 def tests : TestM Unit := do
   let decoded := (list eventCodec).decodeAll (ofBytes (Ffi.sampleEvents ()))
-  check "Lean decodes the events Rust encodes" (decoded.map (·.length) == some 12)
+  check "Lean decodes the events Rust encodes" (decoded.map (·.length) == some 13)
   check "and they are the events meant"
     (decoded.any fun ds => (ds.zip sample).all fun (a, b) => eventEnc a == eventEnc b)
   check "a set title request reaches Rust" (echoes (.setTitle (SafeName.filter "t")))
@@ -50,6 +51,16 @@ def tests : TestM Unit := do
   check "a link" (echoes (.openUri "https://example.org"))
   check "a notification" (echoes (.notify (SafeName.filter "a") (SafeText.filter "b")))
   check "quit" (echoes .quit)
+  let field : Access := { role := .textInput, name := SafeText.trusted "name", value := some (SafeText.trusted "Ada") }
+  let box : Access := { role := .checkBox, checked := some true }
+  let pw : Access := { role := .passwordInput, value := some (SafeText.trusted "pw") }
+  let node : AccessNode :=
+    { id := 2, access := field, bounds := Rect.ofXYWH 0 0 640 640, focusable := true, disabled := false, children := [] }
+  check "an accessibility tree" (echoes (.access 2 [node, { node with id := 3, access := box }]))
+  let secret : AccessNode := { node with access := pw }
+  let sent := (requestEnc (.access 0 [secret])).getD []
+  let hasPw := (List.range sent.length).any fun i => ((sent.drop i).take 2 == ([112, 119] : List UInt8))
+  check "a password's value is never sent" (!sent.isEmpty && !hasPw)
   check "drawing is not a request" (requestEnc (.present Scene.empty)).isNone
   checkEq "malformed requests echo as nothing" 0 (Ffi.requestEcho ⟨#[9]⟩).size
   -- Measuring with the bundled fonts.

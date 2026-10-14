@@ -168,7 +168,9 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
         result (e.moveTo (indexAt measure chars (p.x - v.x0 - padX)) false)
       | .focus | .blur | .enter _ | .leave _ => some (st, [])
       | _ => none
-    focusable := true }
+    focusable := true
+    access := fun _ _ =>
+      some { role := .textInput, name := cfg.placeholder, value := some (SafeText.filter value) } }
 
 /-- A field for a secret: dots, no selection, no copying. -/
 def passwordField {Msg : Type} (value : Secret) (onChange : Secret → Msg) : Widget Msg :=
@@ -191,6 +193,7 @@ def passwordField {Msg : Type} (value : Secret) (onChange : Secret → Msg) : Wi
       | .key .backspace _ true => some (st, [.emit (onChange value.pop)])
       | .focus | .blur | .enter _ | .leave _ => some (st, [])
       | _ => none
-    focusable := true }
+    focusable := true
+    access := fun _ _ => some { role := .passwordInput } }
 
 end Paw.Widgets

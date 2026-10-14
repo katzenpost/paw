@@ -8,6 +8,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod codec;
+pub mod access;
 pub mod events;
 pub mod render;
 pub mod scene;

@@ -64,6 +64,8 @@ pub enum WindowEvent {
     Input(Input),
     Resize(i64, i64),
     Close,
+    /// Assistive technology acts on a widget: 0 press, 1 focus.
+    Access(u64, u64),
 }
 
 fn put_key(w: &mut Writer, k: &Key) {
@@ -167,9 +169,30 @@ pub fn encode_events(evs: &[WindowEvent]) -> Vec<u8> {
                 w.int(*y);
             }
             WindowEvent::Close => w.nat(2),
+            WindowEvent::Access(id, action) => {
+                w.nat(3);
+                w.nat(*id);
+                w.nat(*action);
+            }
         }
     }
     w.bytes
+}
+
+/// A node of the accessibility tree, as Lean sends it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessNode {
+    pub id: u64,
+    /// 0 label, 1 button, 2 check box, 3 text input, 4 password input, 5 scroll view, 6 window.
+    pub role: u64,
+    pub name: String,
+    pub value: Option<String>,
+    /// 0 none, 1 unchecked, 2 checked.
+    pub checked: u64,
+    pub focusable: bool,
+    pub disabled: bool,
+    pub bounds: crate::scene::Rect,
+    pub children: Vec<u64>,
 }
 
 /// What Lean asks of the window, besides drawing.
@@ -180,6 +203,49 @@ pub enum Request {
     OpenUri(String),
     Notify(String, String),
     Quit,
+    /// The accessibility tree and the focused node, 0 for none.
+    Access(u64, Vec<AccessNode>),
+}
+
+fn access_node(r: &mut Reader) -> Option<AccessNode> {
+    let id = r.nat()?;
+    let role = r.nat()?;
+    let name = r.string()?;
+    let value = if r.bool()? { Some(r.string()?) } else { None };
+    let checked = r.nat()?;
+    let focusable = r.bool()?;
+    let disabled = r.bool()?;
+    let bounds = crate::scene::Rect { x0: r.int()?, y0: r.int()?, x1: r.int()?, y1: r.int()? };
+    let n = r.count()?;
+    let mut children = Vec::with_capacity(n);
+    for _ in 0..n {
+        children.push(r.nat()?);
+    }
+    Some(AccessNode { id, role, name, value, checked, focusable, disabled, bounds, children })
+}
+
+fn put_access_node(w: &mut Writer, n: &AccessNode) {
+    w.nat(n.id);
+    w.nat(n.role);
+    w.string(&n.name);
+    match &n.value {
+        Some(v) => {
+            w.bool(true);
+            w.string(v);
+        }
+        None => w.bool(false),
+    }
+    w.nat(n.checked);
+    w.bool(n.focusable);
+    w.bool(n.disabled);
+    w.int(n.bounds.x0);
+    w.int(n.bounds.y0);
+    w.int(n.bounds.x1);
+    w.int(n.bounds.y1);
+    w.nat(n.children.len() as u64);
+    for c in &n.children {
+        w.nat(*c);
+    }
 }
 
 impl Request {
@@ -191,6 +257,15 @@ impl Request {
             2 => Request::OpenUri(r.string()?),
             3 => Request::Notify(r.string()?, r.string()?),
             4 => Request::Quit,
+            5 => {
+                let focus = r.nat()?;
+                let n = r.count()?;
+                let mut nodes = Vec::with_capacity(n);
+                for _ in 0..n {
+                    nodes.push(access_node(&mut r)?);
+                }
+                Request::Access(focus, nodes)
+            }
             _ => return None,
         };
         r.is_empty().then_some(req)
@@ -217,6 +292,14 @@ impl Request {
                 w.string(b);
             }
             Request::Quit => w.nat(4),
+            Request::Access(focus, nodes) => {
+                w.nat(5);
+                w.nat(*focus);
+                w.nat(nodes.len() as u64);
+                for n in nodes {
+                    put_access_node(&mut w, n);
+                }
+            }
         }
         w.bytes
     }
@@ -238,6 +321,7 @@ pub fn sample() -> Vec<WindowEvent> {
         WindowEvent::Input(Input { kind: InputKind::LeaveWindow, time: 10, synthetic: true, obscured: true }),
         WindowEvent::Resize(64000, 48000),
         WindowEvent::Close,
+        WindowEvent::Access(7, 1),
     ]
 }
 
@@ -253,6 +337,20 @@ mod tests {
             Request::OpenUri("https://example.org".into()),
             Request::Notify("a".into(), "b".into()),
             Request::Quit,
+            Request::Access(
+                2,
+                vec![AccessNode {
+                    id: 2,
+                    role: 1,
+                    name: "Go".into(),
+                    value: None,
+                    checked: 0,
+                    focusable: true,
+                    disabled: false,
+                    bounds: crate::scene::Rect { x0: 0, y0: 0, x1: 640, y1: 640 },
+                    children: vec![],
+                }],
+            ),
         ] {
             assert_eq!(Request::decode(&r.encode()), Some(r));
         }
@@ -263,7 +361,7 @@ mod tests {
     #[test]
     fn events_encode() {
         let bytes = encode_events(&sample());
-        assert_eq!(bytes[0], 12);
+        assert_eq!(bytes[0], 13);
         assert_eq!(encode_events(&[WindowEvent::Close]), [1, 2]);
         assert_eq!(encode_events(&[WindowEvent::Resize(1, -1)]), [1, 1, 2, 1]);
     }

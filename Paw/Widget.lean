@@ -79,6 +79,28 @@ def Req.map {α β : Type} (f : α → β) : Req α → Req β
   | .render => .render
   | .copy t => .copy t
 
+/-- What a widget is, to assistive technology. -/
+inductive Role where
+  | label
+  | button
+  | checkBox
+  | textInput
+  /-- A field for a secret, whose value is never told. -/
+  | passwordInput
+  | scrollView
+  | window
+  deriving Repr, DecidableEq, Inhabited
+
+/-- How a widget describes itself to assistive technology such as a screen reader. Names and values
+are `SafeText`, filtered as anything shown on screen is, since a screen reader speaks them in the
+same voice as the app's own words. -/
+structure Access where
+  role : Role
+  name : SafeText := SafeText.empty
+  value : Option SafeText := none
+  checked : Option Bool := none
+  deriving Repr, DecidableEq, Inhabited
+
 /-- A widget as the tree holds it: functions over its state as a `Dynamic`. Widgets are written as
 a `Widget.Spec` over their own state type and built with `Widget.Spec.build`; keeping the state
 dynamic keeps nodes, trees and the runtime in `Type`, where `IO` can hold them. -/
@@ -99,6 +121,8 @@ structure Widget (Msg : Type) where
   focusable : Bool
   /-- Requests when the widget leaves the tree. -/
   dispose : Dynamic → List (Req Msg)
+  /-- How it describes itself to assistive technology, if at all. -/
+  access : Env → Dynamic → Option Access
 
 /-- A widget over its own state type `σ`. -/
 structure Widget.Spec (Msg σ : Type) where
@@ -112,6 +136,7 @@ structure Widget.Spec (Msg σ : Type) where
   handle : Env → σ → Rect → Event → Option (σ × List (Req Msg)) := fun _ _ _ _ => none
   focusable : Bool := false
   dispose : σ → List (Req Msg) := fun _ => []
+  access : Env → σ → Option Access := fun _ _ => none
 
 namespace Widget.Spec
 
@@ -132,6 +157,7 @@ def build (s : Widget.Spec Msg σ) : Widget Msg where
     (s.handle env (s.state d) v e).map fun (st, reqs) => (Dynamic.mk st, reqs)
   focusable := s.focusable
   dispose := fun d => s.dispose (s.state d)
+  access := fun env d => s.access env (s.state d)
 
 end Widget.Spec
 
@@ -148,6 +174,7 @@ def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β whe
   handle := fun env st v e => (w.handle env st v e).map fun (st, rs) => (st, rs.map (Req.map f))
   focusable := w.focusable
   dispose := fun st => (w.dispose st).map (Req.map f)
+  access := w.access
 
 /-- A widget that only holds children: it draws nothing and asks for nothing itself. -/
 def Widget.container {Msg : Type} (kind : String) : Widget Msg :=

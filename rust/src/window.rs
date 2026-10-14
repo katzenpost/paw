@@ -3,7 +3,8 @@
 
 //! The window: winit pumped from Lean's loop, so no Lean code runs inside a winit callback, and
 //! softbuffer to show what `render` draws. Input is turned into events in units of 1/64 logical
-//! pixel; a paste is read from the clipboard only when the user presses Ctrl-V.
+//! pixel; a paste is read from the clipboard only when the user presses Ctrl-V. AccessKit serves the
+//! accessibility tree Lean sends to screen readers, and its action requests come back as events.
 
 use crate::events::{Button, Input, InputKind, Key, Mods, Request, WindowEvent};
 use crate::render::{render, UNITS};
@@ -16,7 +17,7 @@ use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent as WE};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WKey, NamedKey};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 use winit::window::{Window, WindowId};
@@ -37,10 +38,14 @@ struct App {
     cursor: (i64, i64),
     scene: Scene,
     clipboard: Option<arboard::Clipboard>,
+    proxy: EventLoopProxy<accesskit_winit::Event>,
+    adapter: Option<accesskit_winit::Adapter>,
+    /// The last accessibility tree from Lean, for a screen reader that asks for it.
+    access: Option<accesskit::TreeUpdate>,
 }
 
 thread_local! {
-    static LOOP: RefCell<Option<EventLoop<()>>> = const { RefCell::new(None) };
+    static LOOP: RefCell<Option<EventLoop<accesskit_winit::Event>>> = const { RefCell::new(None) };
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
@@ -110,15 +115,19 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<accesskit_winit::Event> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
+        // AccessKit must be attached before the window is first shown.
         let attrs = Window::default_attributes()
             .with_title(self.title.clone())
-            .with_inner_size(LogicalSize::new(self.size.0, self.size.1));
+            .with_inner_size(LogicalSize::new(self.size.0, self.size.1))
+            .with_visible(false);
         let Ok(window) = el.create_window(attrs) else { return };
+        self.adapter = Some(accesskit_winit::Adapter::with_event_loop_proxy(el, &window, self.proxy.clone()));
+        window.set_visible(true);
         let window = Rc::new(window);
         if let Ok(ctx) = softbuffer::Context::new(window.clone()) {
             self.surface = softbuffer::Surface::new(&ctx, window.clone()).ok();
@@ -129,7 +138,31 @@ impl ApplicationHandler for App {
         self.window = Some(window);
     }
 
+    fn user_event(&mut self, _el: &ActiveEventLoop, event: accesskit_winit::Event) {
+        use accesskit_winit::WindowEvent as Ak;
+        match event.window_event {
+            Ak::InitialTreeRequested => {
+                let tree = self.access.clone().unwrap_or_else(|| crate::access::empty(&self.title));
+                if let Some(a) = self.adapter.as_mut() {
+                    a.update_if_active(|| tree);
+                }
+            }
+            Ak::ActionRequested(req) => {
+                let action = match req.action {
+                    accesskit::Action::Click => 0,
+                    accesskit::Action::Focus => 1,
+                    _ => return,
+                };
+                self.events.push(WindowEvent::Access(req.target.0, action));
+            }
+            Ak::AccessibilityDeactivated => {}
+        }
+    }
+
     fn window_event(&mut self, _el: &ActiveEventLoop, _id: WindowId, event: WE) {
+        if let (Some(a), Some(w)) = (self.adapter.as_mut(), self.window.as_ref()) {
+            a.process_event(w, &event);
+        }
         let scale = self.scale();
         match event {
             WE::CloseRequested => self.events.push(WindowEvent::Close),
@@ -200,10 +233,11 @@ impl ApplicationHandler for App {
 /// Opens the window. The first poll reports its size.
 pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
     // Lean runs `main` on a thread of its own; every use of the loop stays on that thread.
-    let mut builder = EventLoop::builder();
+    let mut builder = EventLoop::<accesskit_winit::Event>::with_user_event();
     winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
     winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
     let el = builder.build().map_err(|e| e.to_string())?;
+    let proxy = el.create_proxy();
     with_text(|t| t.load_system_fonts());
     let clipboard = arboard::Clipboard::new().ok();
     LOOP.with(|l| *l.borrow_mut() = Some(el));
@@ -218,6 +252,9 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
             cursor: (0, 0),
             scene: Scene::default(),
             clipboard,
+            proxy,
+            adapter: None,
+            access: None,
         })
     });
     Ok(())
@@ -272,8 +309,16 @@ pub fn request(r: Request) {
                 let _ = std::process::Command::new("notify-send").arg("--").arg(title).arg(body).spawn();
             }
             Request::Quit => {
+                app.adapter = None;
                 app.window = None;
                 app.surface = None;
+            }
+            Request::Access(focus, nodes) => {
+                let tree = crate::access::update(focus, &nodes, app.scale(), &app.title);
+                app.access = Some(tree.clone());
+                if let Some(a) = app.adapter.as_mut() {
+                    a.update_if_active(|| tree);
+                }
             }
         }
     })

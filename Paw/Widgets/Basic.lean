@@ -41,7 +41,12 @@ def label {Msg : Type} (t : SafeText) (style : Option TextStyle := none) : Widge
       (fixedSize w.toNat, fixedSize h.toNat)
     render := fun env _ v =>
       Scene.inBox v [centeredText env v v.x0 t (style.getD (textStyle env))]
-    render_within := fun _ _ v => Scene.inBox_within v _ }
+    render_within := fun _ _ v => Scene.inBox_within v _
+    access := fun _ _ => some { role := .label, name := t } }
+
+/-- Lines joined by spaces, as a screen reader reads a paragraph. -/
+def joinLines (lines : List SafeText) : SafeText :=
+  lines.foldl (fun acc l => if acc.text.isEmpty then l else acc ++ SafeText.trusted " " ++ l) SafeText.empty
 
 /-- Lines of text, one under another. -/
 def paragraph {Msg : Type} (lines : List SafeText) : Widget Msg :=
@@ -58,7 +63,8 @@ def paragraph {Msg : Type} (lines : List SafeText) : Widget Msg :=
         let (_, h) := env.measure style t
         (y + h, ds ++ [Draw.text ⟨v.x0, y⟩ t style])) (v.y0, [])
       Scene.inBox v items
-    render_within := fun _ _ v => Scene.inBox_within v _ }
+    render_within := fun _ _ v => Scene.inBox_within v _
+    access := fun _ _ => some { role := .label, name := joinLines lines } }
 
 /-- A button that emits `onClick` when clicked, or when Enter or Space is pressed on it. -/
 def button {Msg : Type} (caption : SafeText) (onClick : Msg) : Widget Msg :=
@@ -82,7 +88,8 @@ def button {Msg : Type} (caption : SafeText) (onClick : Msg) : Widget Msg :=
       | .key .enter _ true | .key (.char ' ') _ true => some (st, [.emit onClick])
       | .enter _ | .leave _ | .press .. | .release .. | .focus | .blur => some (st, [])
       | _ => none
-    focusable := true }
+    focusable := true
+    access := fun _ _ => some { role := .button, name := caption } }
 
 /-- A checkbox showing `value`, which emits `onChange` with the other value when toggled. -/
 def checkbox {Msg : Type} (caption : SafeText) (value : Bool) (onChange : Bool → Msg) :
@@ -107,7 +114,8 @@ def checkbox {Msg : Type} (caption : SafeText) (value : Bool) (onChange : Bool �
       | .click .. | .key (.char ' ') _ true => some (st, [.emit (onChange !value)])
       | .enter _ | .leave _ | .focus | .blur => some (st, [])
       | _ => none
-    focusable := true }
+    focusable := true
+    access := fun _ _ => some { role := .checkBox, name := caption, checked := some value } }
 
 /-- Empty space that takes the width left over, and no height: for pushing things apart in a
 row. -/

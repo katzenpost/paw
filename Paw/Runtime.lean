@@ -28,8 +28,17 @@ structure App (caps : List Cap) extends Component caps where
 
 attribute [instance] App.beq
 
+/-- What assistive technology asks of a widget. -/
+inductive AccessAction where
+  | press
+  | focus
+  deriving Repr, DecidableEq, Inhabited
+
 inductive WindowEvent where
   | input (i : Input)
+  /-- Assistive technology, such as a screen reader, acts on a widget. Any program on the session
+  bus can ask this, so it is delivered without a designation. -/
+  | access (target : WidgetId) (action : AccessAction)
   /-- The window's new size, in units. -/
   | resize (w h : Int)
   | close
@@ -43,6 +52,8 @@ inductive Request where
   | openUri (uri : String)
   | notify (title : SafeName) (body : SafeText)
   | quit
+  /-- The tree as assistive technology sees it, and the focused widget's id, 0 for none. -/
+  | access (focus : Nat) (nodes : List AccessNode)
   deriving Repr, DecidableEq
 
 /-- What a step asks for: of the platform, or a task to run. -/
@@ -89,6 +100,13 @@ def layout (rt : Runtime app) : Runtime app :=
 def present (rt : Runtime app) : Output app.Msg :=
   .request (.present (Scene.inBox rt.window [.fill rt.window rt.theme.background 0] ++ rt.tree.render rt.env))
 
+/-- The tree as assistive technology sees it. -/
+def accessOut (rt : Runtime app) : Output app.Msg :=
+  .request (.access ((rt.router.focused.map (·.n)).getD 0) (rt.tree.accessTree rt.env))
+
+/-- A new frame: the scene, and the tree for assistive technology. -/
+def frame (rt : Runtime app) : List (Output app.Msg) := [rt.present, rt.accessOut]
+
 /-- `update` on one message: the runtime with the new model, and the commands' outputs. -/
 def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List (Output app.Msg) :=
   let ((), (model, cmds)) := (app.update o m).run (rt.model, #[])
@@ -134,10 +152,10 @@ def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List
   let wasUpdated := rt.updated
   let rt := { rt with updated := false }
   if !wasUpdated || rt.model == before then
-    if changed then (rt.layout, outs ++ [rt.layout.present]) else (rt, outs)
+    if changed then (rt.layout, outs ++ rt.layout.frame) else (rt, outs)
   else
     let (rt, outs') := rt.rebuild
-    (rt, outs ++ outs' ++ [rt.present])
+    (rt, outs ++ outs' ++ rt.frame)
 
 /-- The runtime for `app` in a window of `window`, at `now`, and its first scene. -/
 def start (app : App caps) (window : Rect) (now : Nat)
@@ -145,7 +163,7 @@ def start (app : App caps) (window : Rect) (now : Nat)
   let (tree, nextId) := ((app.view app.init).resolve none).init 1
   let rt : Runtime app := { model := app.init, tree, nextId, router := {}, window, now, measure }
   let rt := rt.layout
-  (rt, [rt.present])
+  (rt, rt.frame)
 
 /-- One event from the window. -/
 def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List (Output app.Msg) :=
@@ -162,7 +180,23 @@ def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List
     rt.settle before (moved || handled) outs
   | .resize w h =>
     let rt := { rt with window := Rect.ofXYWH rt.window.x0 rt.window.y0 w h }.layout
-    (rt, [rt.present])
+    (rt, rt.frame)
+  | .access id action =>
+    let before := rt.model
+    match rt.tree.find? id, action with
+    | some n, .press =>
+      let p : Point := ⟨(n.viewport.x0 + n.viewport.x1) / 2, (n.viewport.y0 + n.viewport.y1) / 2⟩
+      let (rt, outs, _) := rt.deliver { target := id, event := .click p .primary 1 }
+      rt.settle before true outs
+    | some n, .focus =>
+      if n.focusable then
+        let (router, ds) := rt.router.moveFocus (some id) now
+        let (rt, outs, _) := ds.foldl
+          (fun (rt, outs, h) d => let (rt, o, h') := rt.deliver d; (rt, outs ++ o, h || h'))
+          ({ rt with router }, [], false)
+        rt.settle before true outs
+      else (rt, [])
+    | none, _ => (rt, [])
   | .close => ({ rt with quit := true }, [])
 
 /-- A task's result, as a message of origin `other`. -/

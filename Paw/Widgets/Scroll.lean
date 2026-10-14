@@ -73,7 +73,8 @@ def scrollWidget {Msg : Type} : Widget Msg :=
       | .wheel _ _ dy => by_ (dy * scrollStep)
       | .key .pageDown _ true => by_ (v.height - scrollStep)
       | .key .pageUp _ true => by_ (scrollStep - v.height)
-      | _ => none }
+      | _ => none
+    access := fun _ _ => some { role := .scrollView } }
 
 /-- A key with modifiers. -/
 structure KeyCombo where

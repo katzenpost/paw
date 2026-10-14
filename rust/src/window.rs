@@ -13,6 +13,7 @@ use crate::text::with_text;
 use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -28,6 +29,30 @@ pub fn now() -> u64 {
     START.with(|s| s.elapsed().as_millis() as u64)
 }
 
+/// What other threads send the loop: AccessKit's requests, and a nudge to stop waiting.
+pub enum UserEvent {
+    Access(accesskit_winit::Event),
+    Wake,
+}
+
+impl From<accesskit_winit::Event> for UserEvent {
+    fn from(e: accesskit_winit::Event) -> Self {
+        UserEvent::Access(e)
+    }
+}
+
+/// The loop's proxy, for `wake` from any thread.
+static WAKER: OnceLock<Mutex<EventLoopProxy<UserEvent>>> = OnceLock::new();
+
+/// Makes a poll waiting on the loop return, from any thread; nothing before the window opens.
+pub fn wake() {
+    if let Some(p) = WAKER.get() {
+        if let Ok(p) = p.lock() {
+            let _ = p.send_event(UserEvent::Wake);
+        }
+    }
+}
+
 struct App {
     title: String,
     size: (u32, u32),
@@ -38,14 +63,14 @@ struct App {
     cursor: (i64, i64),
     scene: Scene,
     clipboard: Option<arboard::Clipboard>,
-    proxy: EventLoopProxy<accesskit_winit::Event>,
+    proxy: EventLoopProxy<UserEvent>,
     adapter: Option<accesskit_winit::Adapter>,
     /// The last accessibility tree from Lean, for a screen reader that asks for it.
     access: Option<accesskit::TreeUpdate>,
 }
 
 thread_local! {
-    static LOOP: RefCell<Option<EventLoop<accesskit_winit::Event>>> = const { RefCell::new(None) };
+    static LOOP: RefCell<Option<EventLoop<UserEvent>>> = const { RefCell::new(None) };
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
@@ -129,7 +154,7 @@ impl App {
     }
 }
 
-impl ApplicationHandler<accesskit_winit::Event> for App {
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -161,8 +186,12 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
         self.window = Some(window);
     }
 
-    fn user_event(&mut self, _el: &ActiveEventLoop, event: accesskit_winit::Event) {
+    fn user_event(&mut self, _el: &ActiveEventLoop, event: UserEvent) {
         use accesskit_winit::WindowEvent as Ak;
+        // A wake has done its work by ending the wait.
+        let UserEvent::Access(event) = event else {
+            return;
+        };
         match event.window_event {
             Ak::InitialTreeRequested => {
                 let tree = self
@@ -292,11 +321,21 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
 /// Opens the window. The first poll reports its size.
 pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
     // Lean runs `main` on a thread of its own; every use of the loop stays on that thread.
-    let mut builder = EventLoop::<accesskit_winit::Event>::with_user_event();
+    let mut builder = EventLoop::<UserEvent>::with_user_event();
     winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
     winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
     let el = builder.build().map_err(|e| e.to_string())?;
     let proxy = el.create_proxy();
+    match WAKER.get() {
+        Some(w) => {
+            if let Ok(mut w) = w.lock() {
+                *w = proxy.clone();
+            }
+        }
+        None => {
+            let _ = WAKER.set(Mutex::new(proxy.clone()));
+        }
+    }
     with_text(|t| t.load_system_fonts());
     let clipboard = arboard::Clipboard::new().ok();
     LOOP.with(|l| *l.borrow_mut() = Some(el));

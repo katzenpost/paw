@@ -87,7 +87,7 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | Layout | `SizeReq {fixed, flex, extra, factor}` per axis; `assignStackAreas` gives fixed sizes, shrinks flex in proportion, then shares extra space by factor (`Widgets/Containers/Stack.hs`) | The same algorithm over integers, with its laws proved |
 | Event routing | Keys, text and clipboard go to the focused path; press, move and wheel go to the widget under the point; overlays become the root for hit-testing; a `Click` needs press and release on the same widget (`Main/Handlers.hs`) | The same, plus the checks from the security guidelines before a designation is made |
 | Rendering | Only on request: input, `RenderOnce`, `RenderEvery`; overlays drawn after the main pass | The same; the Scene is sent to Rust only when a render is needed, with overlays after the tree |
-| Tasks and producers | `Task (IO e)` for one result, `Producer` for a stream, both delivered to the widget that started them | The same, delivered with origin `result` and checked against the current tree |
+| Tasks and producers | `Task (IO e)` for one result, `Producer` for a stream, both delivered to the widget that started them | `Cmd.task` for one result and `Cmd.producer` for a stream, both delivered to `update` with origin `other`; what producers sent since the last pass arrives together, with one rebuild and one frame. `App.start` runs commands when the app starts, as monomer's `appInitEvent` does |
 
 ## What Paw changes
 
@@ -391,6 +391,7 @@ inductive Cmd (Msg : Type) (caps : List Cap) : Origin → Type where
   | effect {c} (d : Designation) (e : Effect c) (granted : c ∈ caps)
       (designated : e.DesignatedBy d) : Cmd Msg caps (.user d)
   | task {o} (io : IO Msg) (granted : Cap.io ∈ caps) : Cmd Msg caps o
+  | producer {o} (run : (Msg → IO Unit) → IO Unit) (granted : Cap.io ∈ caps) : Cmd Msg caps o
   | notify {o} (title : SafeName) (body : SafeText) (granted : Cap.notify ∈ caps) : Cmd Msg caps o
   | setTitle {o} (title : SafeName) : Cmd Msg caps o
   | quit {o} : Cmd Msg caps o
@@ -491,7 +492,7 @@ One step for input, as in monomer's `mainLoop`:
 4. If the model changed, the view is rebuilt, merged with the tree on screen, laid out, and the router notes where everything now is and which overlays are open. Focus, hover and press on a widget that left the tree go with it. A modal that opened other than by this input is dismissed, and the view rebuilt again.
 5. The scene is drawn again only if the model changed, a widget handled the input, or focus, hover or press moved. Pointer movement over a place where nothing reacts draws nothing.
 
-`Runtime.run` is the IO loop around `step`, over a `Platform`, a structure of IO functions: poll events, the time, the window size, measure text, perform a request. The Rust layer provides one, and tests a scripted fake. Tasks run with `IO.asTask`; their results are stepped in with origin `other`.
+`Runtime.run` is the IO loop around `step`, over a `Platform`, a structure of IO functions: poll events, the time, the window size, measure text, perform a request. The Rust layer provides one, and tests a scripted fake. Tasks run with `IO.asTask`; their results are stepped in with origin `other`. A producer runs on a dedicated thread and is given a `send`, which queues a message for the loop and wakes it. When the app quits, producers still running are cancelled, and their next `send` throws.
 
 Nodes, trees and the runtime must be in `Type` for `IO` to hold them. So a widget keeps its state as a `Dynamic`. Widgets are still written over their own state type, as a `Widget.Spec Msg σ` whose `build` wraps each function, and `render_within` carries through the wrapping.
 
@@ -501,7 +502,7 @@ Widgets that change with time, such as a blinking caret or an animation, declare
 
 The router keeps the schedule as it indexes the tree after each layout: a widget that still ticks as often keeps its next tick, a new one is due a period later. `Runtime.advance` is the step for time passing. It gives each widget whose tick is due an `Event.tick`, to that widget alone, and hands messages from `Cmd.after` that are due to `update`, with origin `other`, so a timer carries no authority whatever started it.
 
-The loop sleeps in the platform's poll until an event or `Runtime.nextDeadline`, the earliest tick, delayed message or tooltip due. With nothing waiting it sleeps with no timeout, so an idle app uses no CPU; the end-to-end tests check this. Monomer instead draws 60 frames a second while anything is scheduled and polls otherwise. Two things wake Paw early: a task finishing does not wake the platform, so while tasks run the loop waits at most 16 ms; and while the window cannot be seen, widgets do not tick at all.
+The loop sleeps in the platform's poll until an event or `Runtime.nextDeadline`, the earliest tick, delayed message or tooltip due. With nothing waiting it sleeps with no timeout, so an idle app uses no CPU; the end-to-end tests check this. Monomer instead draws 60 frames a second while anything is scheduled and polls otherwise. A task finishing and a producer sending wake the platform through `Platform.wake`, which on Linux sends winit a user event through its `EventLoopProxy`, so neither makes the loop poll; on a platform that cannot be woken, the loop waits at most 16 ms while they run. While the window cannot be seen, widgets do not tick at all.
 
 **Animations.** `fadeIn` and `slideIn` wrap a child and bring it in over a time from their first tick. A slide moves the content rectangle, as a scroll does, so hit-testing follows what is drawn. A fade lowers the alpha of its children's drawing through `mapChildren`, which changes the scene before the tree clips it to the box, so the clipping law is unchanged. An animation is not trusted to be harmless: while it runs, its widget's `moving` is true, and the router counts everything in it as moved on every frame. A control that is still faint, or still sliding under the pointer, cannot be designated until it has been still for `stableMs`. With reduced motion (`PAW_REDUCE_MOTION=1`), every animation is at its end at once and never ticks.
 

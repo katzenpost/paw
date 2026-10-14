@@ -82,6 +82,8 @@ def echoes (s : Scene) : Bool :=
 
 def tests : TestM Unit := do
   checkEq "the Rust layer speaks our byte formats" Ffi.abiVersion (Ffi.rustAbiVersion ())
+  Ffi.wake
+  check "a wake with no window open does nothing" true
   check "abiMatches" Ffi.abiMatches
   check "an empty scene echoes" (echoes Scene.empty)
   checkEq "malformed bytes echo as nothing" 0 (Ffi.sceneEcho ⟨#[1, 0, 0, 0, 0, 9]⟩).size

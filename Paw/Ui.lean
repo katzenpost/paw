@@ -95,9 +95,11 @@ def lazy {α : Type} [BEq α] [TypeName α] (arg : α) (view : α → Node Msg)
     (key : Option String := none) : Node Msg :=
   Node.lazy arg view key
 
-/-- The child, scrolled vertically, or along `axes`. -/
-def scroll (child : Node Msg) (key : Option String := none) (axes : ScrollAxes := .vertical) : Node Msg :=
-  Node.containerWith (scrollWidgetFor axes) (scrollLayoutFor axes) [child] key
+/-- The child, scrolled vertically, or along `axes`; with `follow`, kept at the end of its content
+as it grows, unless scrolled back from it. -/
+def scroll (child : Node Msg) (key : Option String := none) (axes : ScrollAxes := .vertical)
+    (follow : Bool := false) : Node Msg :=
+  Node.containerWith (scrollWidgetFor axes follow) (scrollLayoutFor axes) [child] key
 
 /-- The child, scrolled across. -/
 def hscroll (child : Node Msg) (key : Option String := none) : Node Msg := scroll child key .horizontal

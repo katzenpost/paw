@@ -10,10 +10,11 @@ import Paw.Cmd
 `Runtime.step` takes the runtime's state and one event from the window and gives the new state and
 what to do: draw a scene, set the title, write the clipboard, open a link, run a task. It is pure,
 so tests drive it directly. `Runtime.run` is the loop around it: it polls the platform, steps, and
-carries out what each step asks, running tasks on their own threads and stepping their results in
-as messages of origin `other`. Between events it sleeps in the platform's poll until
-`nextDeadline`, when `advance` gives widgets their ticks and `update` its delayed messages; with
-nothing waiting, it sleeps until there is an event.
+carries out what each step asks, running tasks and producers on their own threads and stepping
+what they send in as messages of origin `other`, all that arrived since the last pass at once.
+Between events it sleeps in the platform's poll until `nextDeadline`, when `advance` gives widgets
+their ticks and `update` its delayed messages; with nothing waiting, it sleeps until there is an
+event, or until a task or producer wakes it.
 
 A step for input routes it, gives each delivery to its widget (and to the widget's ancestors in
 turn, if it does not handle it), and runs `update` on the messages that come out. A widget's
@@ -26,6 +27,8 @@ namespace Paw
 /-- An app: a component at the root, with the model it starts with. -/
 structure App (caps : List Cap) extends Component caps where
   init : Model
+  /-- Commands run when the app starts, such as a producer for what arrives from a network. -/
+  start : List (Cmd Msg caps .other) := []
   [beq : BEq Model]
 
 attribute [instance] App.beq
@@ -73,6 +76,7 @@ inductive Request where
 inductive Output (Msg : Type) where
   | request (r : Request)
   | task (io : IO Msg)
+  | producer (run : (Msg → IO Unit) → IO Unit)
   /-- `m` to `update` in `ms` milliseconds. The runtime keeps these itself. -/
   | after (ms : Nat) (m : Msg)
 
@@ -80,6 +84,7 @@ def Cmd.toOutput {Msg : Type} {caps : List Cap} {o : Origin} : Cmd Msg caps o �
   | .effect _ (.setClipboard _ t) _ _ => .request (.setClipboard t)
   | .effect _ (.openUri _ uri _) _ _ => .request (.openUri uri)
   | .task io _ => .task io
+  | .producer run _ => .producer run
   | .notify t b _ => .request (.notify t b)
   | .setTitle t => .request (.setTitle t)
   | .quit => .request .quit
@@ -161,14 +166,17 @@ tree does not depend on hover or press, so a frame for those alone leaves it out
 def frame (rt : Runtime app) (access : Bool := true) : List (Output app.Msg) :=
   if access then [rt.present, rt.accessOut] else [rt.present]
 
-/-- `update` on one message: the runtime with the new model, and the commands' outputs. -/
-def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List (Output app.Msg) :=
-  let ((), (model, cmds)) := (app.update o m).run (rt.model, #[])
-  let outs := cmds.toList.map Cmd.toOutput
+/-- Commands' outputs taken in: quitting noted, and delayed messages kept; the rest to carry out. -/
+def takeOutputs (rt : Runtime app) (outs : List (Output app.Msg)) : Runtime app × List (Output app.Msg) :=
   let quit := rt.quit || outs.any fun | .request .quit => true | _ => false
   let delayed := rt.delayed ++ (outs.filterMap fun | .after ms m => some (rt.now + ms, m) | _ => none).toArray
   let outs := outs.filter fun | .after .. => false | _ => true
-  ({ rt with model, updated := true, quit, delayed }, outs)
+  ({ rt with quit, delayed }, outs)
+
+/-- `update` on one message: the runtime with the new model, and the commands' outputs. -/
+def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List (Output app.Msg) :=
+  let ((), (model, cmds)) := (app.update o m).run (rt.model, #[])
+  { rt with model, updated := true }.takeOutputs (cmds.toList.map Cmd.toOutput)
 
 /-- What a widget's request comes to, while handling a delivery with origin `o`. -/
 def applyReq (rt : Runtime app) (o : Origin) : Req app.Msg → Runtime app × List (Output app.Msg)
@@ -240,14 +248,17 @@ def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List
     let (rt, outs') := rt.rebuild
     (rt, outs ++ outs' ++ rt.frame)
 
-/-- The runtime for `app` in a window of `window`, at `now`, and its first scene. -/
+/-- The runtime for `app` in a window of `window`, at `now`: its first scene, then what the app's
+start commands ask. -/
 def start (app : App caps) (window : Rect) (now : Nat)
     (measure : TextStyle → SafeText → Int × Int) (motion : Bool := true) (theme : Theme := Theme.light) :
     Runtime app × List (Output app.Msg) :=
   let (tree, nextId) := ((app.view app.init).resolve none).init 1
   let rt : Runtime app := { model := app.init, tree, nextId, router := {}, window, now, measure, motion, theme }
   let rt := rt.layout
-  (rt, rt.frame)
+  let frame := rt.frame
+  let (rt, outs) := rt.takeOutputs (app.start.map Cmd.toOutput)
+  (rt, frame ++ outs)
 
 /-- The platform asked for the pointer's shape over the widget under it, if that changed. -/
 def pointCursor (rt : Runtime app) (outs : List (Output app.Msg)) : Runtime app × List (Output app.Msg) :=
@@ -356,11 +367,18 @@ theorem now_le_nextDeadline {rt : Runtime app} {d : Nat} (h : rt.nextDeadline = 
   obtain ⟨x, -, rfl⟩ := hm
   omega
 
+/-- What tasks and producers sent, as messages of origin `other`, in order, with one rebuild and
+one frame for them all. -/
+def results (rt : Runtime app) (ms : List app.Msg) (now : Nat) : Runtime app × List (Output app.Msg) :=
+  let before := rt.model
+  let rt := { rt with now, router := { rt.router with consent := none } }
+  let (rt, outs) := ms.foldl (fun (rt, outs) m => let (rt, o) := rt.applyMsg .other m; (rt, outs ++ o))
+    (rt, [])
+  rt.settle before false outs
+
 /-- A task's result, as a message of origin `other`. -/
 def taskResult (rt : Runtime app) (m : app.Msg) (now : Nat) : Runtime app × List (Output app.Msg) :=
-  let before := rt.model
-  let (rt, outs) := { rt with now, router := { rt.router with consent := none } }.applyMsg .other m
-  rt.settle before false outs
+  rt.results [m] now
 
 end Runtime
 
@@ -379,58 +397,105 @@ structure Platform where
   motion : Bool := true
   /-- The theme the user chose. -/
   theme : Theme := Theme.light
+  /-- Makes a waiting `poll` return, from any thread. -/
+  wake : IO Unit := pure ()
+  /-- `wake` works, so the loop need not poll for tasks finishing. -/
+  wakes : Bool := false
 
 namespace Runtime
 
 variable {caps : List Cap} {app : App caps}
 
-/-- Carries out outputs: requests go to the platform, tasks start on their own threads. -/
-def carryOut (p : Platform) (outs : List (Output app.Msg)) :
-    IO (Array (Task (Except IO.Error app.Msg))) := do
+/-- What producers have sent that has yet to reach `update`, and whether the app has quit. -/
+structure Inbox (Msg : Type) where
+  sent : IO.Ref (Array Msg)
+  stopped : IO.Ref Bool
+
+def Inbox.new (Msg : Type) : BaseIO (Inbox Msg) := do
+  return { sent := ← IO.mkRef #[], stopped := ← IO.mkRef false }
+
+/-- Sends `m` to the loop and wakes it; once the app has quit, throws instead, ending the producer
+that sent it. -/
+def Inbox.send {Msg : Type} (inbox : Inbox Msg) (p : Platform) (m : Msg) : IO Unit := do
+  if ← inbox.stopped.get then throw (IO.userError "the app has quit")
+  inbox.sent.modify (·.push m)
+  p.wake
+
+/-- Carries out outputs: requests go to the platform; tasks and producers start on their own
+threads, and wake the platform when they finish, or in a producer's case each time it sends. -/
+def carryOut (p : Platform) (inbox : Inbox app.Msg) (outs : List (Output app.Msg)) :
+    IO (Array (Task (Except IO.Error app.Msg)) × Array (Task (Except IO.Error Unit))) := do
   let mut tasks := #[]
+  let mut producers := #[]
   for o in outs do
     match o with
     | .request r => p.perform r
-    | .task io => tasks := tasks.push (← IO.asTask io)
+    | .task io => tasks := tasks.push (← IO.asTask (tryFinally io p.wake))
+    | .producer run =>
+      producers := producers.push (← IO.asTask (prio := .dedicated) (tryFinally (run (inbox.send p)) p.wake))
     | .after .. => pure ()
-  return tasks
+  return (tasks, producers)
 
-/-- How long the loop may wait for the platform: until the next deadline, and while tasks are
-running, no more than 16 ms, since a task finishing does not wake the platform; with nothing
-waiting, until the platform has an event. -/
-def waitFor (rt : Runtime app) (now : Nat) (tasksRunning : Bool) : Option Nat :=
+/-- How long the loop may wait for the platform: until the next deadline, and while tasks or
+producers are running on a platform that cannot be woken, no more than 16 ms; with nothing
+waiting, until the platform has an event or is woken. -/
+def waitFor (rt : Runtime app) (now : Nat) (running : Bool) (wakes : Bool := false) : Option Nat :=
   let untilDue := rt.nextDeadline.map (· - now)
-  if tasksRunning then some ((untilDue.map (min 16)).getD 16) else untilDue
+  if running && !wakes then some ((untilDue.map (min 16)).getD 16) else untilDue
 
 /-- Runs `app` on `p` until it quits or the window closes, calling `onStep` with the runtime after
-each poll. The loop sleeps in the platform's poll until an event or the next deadline. -/
+each poll. The loop sleeps in the platform's poll until an event, the next deadline, or a wake.
+When it ends, producers still running are cancelled (`IO.checkCanceled` tells them so), and their
+next send throws. -/
 partial def run (app : App caps) (p : Platform) (onStep : Runtime app → IO Unit := fun _ => pure ()) :
     IO Unit := do
   let (w, h) ← p.size
+  let inbox ← Inbox.new app.Msg
   let (rt, outs) := start app (Rect.ofXYWH 0 0 w h) (← p.now) p.measure p.motion p.theme
-  loop rt (← carryOut p outs)
+  let (tasks, producers) ← carryOut p inbox outs
+  let producers ← loop inbox rt tasks producers
+  inbox.stopped.set true
+  for t in producers do IO.cancel t
 where
-  loop (rt : Runtime app) (tasks : Array (Task (Except IO.Error app.Msg))) : IO Unit := do
+  /-- The loop, until the app quits; then the producers still running. -/
+  loop (inbox : Inbox app.Msg) (rt : Runtime app) (tasks : Array (Task (Except IO.Error app.Msg)))
+      (producers : Array (Task (Except IO.Error Unit))) : IO (Array (Task (Except IO.Error Unit))) := do
     onStep rt
-    if rt.quit then return
+    if rt.quit then return producers
     let mut rt := rt
     let mut tasks := tasks
-    for ev in ← p.poll (rt.waitFor (← p.now) !tasks.isEmpty) do
+    let mut producers := producers
+    let carry (outs : List (Output app.Msg)) := carryOut p inbox outs
+    for ev in ← p.poll (rt.waitFor (← p.now) (!tasks.isEmpty || !producers.isEmpty) p.wakes) do
       let (rt', outs) := rt.step ev (← p.now)
       rt := rt'
-      tasks := tasks ++ (← carryOut p outs)
+      let (t, ps) ← carry outs
+      tasks := tasks ++ t
+      producers := producers ++ ps
     let (rt', outs) := rt.advance (← p.now)
     rt := rt'
-    tasks := tasks ++ (← carryOut p outs)
+    let (t, ps) ← carry outs
+    tasks := tasks ++ t
+    producers := producers ++ ps
     let mut pending := #[]
     for t in tasks do
       if ← IO.hasFinished t then
         if let .ok m := t.get then
           let (rt', outs) := rt.taskResult m (← p.now)
           rt := rt'
-          pending := pending ++ (← carryOut p outs)
+          let (t, ps) ← carry outs
+          pending := pending ++ t
+          producers := producers ++ ps
       else pending := pending.push t
-    loop rt pending
+    let sent ← inbox.sent.modifyGet (·, #[])
+    if !sent.isEmpty then
+      let (rt', outs) := rt.results sent.toList (← p.now)
+      rt := rt'
+      let (t, ps) ← carry outs
+      pending := pending ++ t
+      producers := producers ++ ps
+    producers ← producers.filterM fun t => return !(← IO.hasFinished t)
+    loop inbox rt pending producers
 
 end Runtime
 

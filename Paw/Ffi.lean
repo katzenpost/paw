@@ -60,6 +60,8 @@ and id, and the handle. -/
 
 @[extern "paw_window_open"] opaque windowOpen : @& String → UInt32 → UInt32 → IO Unit
 @[extern "paw_window_poll"] opaque windowPoll : UInt32 → IO ByteArray
+/-- Makes a waiting `windowPoll` return; callable from any thread. -/
+@[extern "paw_wake"] opaque wake : IO Unit
 @[extern "paw_window_present"] opaque windowPresent : @& ByteArray → IO Unit
 @[extern "paw_window_request"] opaque windowRequest : @& ByteArray → IO Unit
 @[extern "paw_window_size"] opaque windowSize : IO ByteArray

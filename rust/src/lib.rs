@@ -158,6 +158,12 @@ pub unsafe extern "C" fn paw_window_poll(timeout_ms: u32) -> lean_obj_res {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn paw_wake() -> lean_obj_res {
+    window::wake();
+    io_ok(lean_box(0))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn paw_window_present(a: b_lean_obj_arg) -> lean_obj_res {
     match scene::Scene::decode(bytes_of(a)) {
         Some(s) => {
@@ -267,5 +273,10 @@ mod tests {
     #[test]
     fn abi_version() {
         assert_eq!(paw_abi_version(std::ptr::null_mut()), ABI_VERSION);
+    }
+
+    #[test]
+    fn wake_before_open() {
+        window::wake();
     }
 }

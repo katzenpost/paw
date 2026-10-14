@@ -363,29 +363,37 @@ end
 def resize (env : Env) (n : Node Msg) (v : Rect) : Node Msg := place env (measure env n) v
 
 mutual
-/-- What the node and its descendants draw, within its box. -/
-def render (env : Env) : Node Msg → Scene
+/-- What the node and its descendants draw, within its box, leaving out descendants wholly outside
+`seen`, the part of the window its ancestors leave visible, which their clips would remove. -/
+def renderIn (env : Env) (seen : Rect) : Node Msg → Scene
   | mk w st i _ cs =>
-    if i.visible then w.render (envAt env i) st i.viewport ++ (renderList env i.viewport cs).clip i.viewport
+    if i.visible then
+      w.render (envAt env i) st i.viewport ++ (renderList env (i.viewport.inter seen) cs).clip i.viewport
     else Scene.empty
   | deferred .. => Scene.empty
 
-/-- The children's scenes, leaving out those wholly outside `box`, which the clip would remove. -/
-def renderList (env : Env) (box : Rect) : List (Node Msg) → Scene
+def renderList (env : Env) (seen : Rect) : List (Node Msg) → Scene
   | [] => Scene.empty
   | c :: cs =>
-    if (c.viewport.inter box).isEmpty then renderList env box cs
-    else render env c ++ renderList env box cs
+    if (c.viewport.inter seen).isEmpty then renderList env seen cs
+    else renderIn env seen c ++ renderList env seen cs
 end
 
-theorem render_within (env : Env) (n : Node Msg) : (n.render env).Within n.viewport := by
+/-- What the node and its descendants draw, within its box. -/
+def render (env : Env) (n : Node Msg) : Scene := renderIn env n.viewport n
+
+theorem renderIn_within (env : Env) (seen : Rect) (n : Node Msg) :
+    (n.renderIn env seen).Within n.viewport := by
   match n with
   | mk w st i l cs =>
-    simp only [render, viewport, info]
+    simp only [renderIn, viewport, info]
     split
     · exact Scene.append_within (w.render_within _ st i.viewport) (Scene.clip_within _ _)
     · exact Scene.empty_within _
   | deferred .. => exact Scene.empty_within _
+
+theorem render_within (env : Env) (n : Node Msg) : (n.render env).Within n.viewport :=
+  renderIn_within env n.viewport n
 
 mutual
 def find? (id : WidgetId) : Node Msg → Option (Node Msg)

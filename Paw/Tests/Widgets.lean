@@ -206,19 +206,21 @@ def appTests : TestM Unit := do
   let sc := (rt.tree.findKey? "sc").map (·.viewport) |>.getD default
   let inside : Point := ⟨sc.x0 + px 10, sc.y0 + px 5⟩
   let lineY (rt : Runtime app) : Option Int := (scene rt).items.findSome? fun
-    | (_, .text p t _) => if t.text == "line 0" then some p.y else none
+    | (_, .text p t _) => if t.text == "line 2" then some p.y else none
     | _ => none
   check "the scroll's box is shorter than its content" (sc.height < px 100)
-  checkEq "the first line starts at the top" (some sc.y0) (lineY rt)
+  checkEq "the third line starts 40 pixels down" (some (sc.y0 + px 40)) (lineY rt)
   let (rt, _) := step rt (.wheel inside 0 1) 11000
-  checkEq "the wheel scrolls by a step" (some (sc.y0 - px 40)) (lineY rt)
+  checkEq "the wheel scrolls by a step" (some sc.y0) (lineY rt)
   let (rt, _) := step rt (.wheel inside 0 9) 11100
-  checkEq "and no further than the content" (some (sc.y0 - (px 100 - sc.height))) (lineY rt)
+  checkEq "and no further than the content" (some (sc.y0 + px 40 - (px 100 - sc.height))) (lineY rt)
   let (rt, _) := step rt (.wheel inside 0 (-9)) 11200
-  checkEq "nor back past the top" (some sc.y0) (lineY rt)
+  checkEq "nor back past the top" (some (sc.y0 + px 40)) (lineY rt)
   check "a bar shows in the gutter when the content is taller"
     ((scene rt).items.any fun | (_, .fill b _ _) => b.x0 ≥ sc.x1 - Widgets.gutter && b.y0 ≥ sc.y0 | _ => false)
   let (rt, _) := step rt (.wheel inside 0 1) 11300
+  check "lines scrolled wholly out of view are not drawn"
+    (!(scene rt).items.any fun | (_, .text _ t _) => t.text == "line 0" | _ => false)
   check "scrolled content stays within the scroll's box"
     ((scene rt).items.all fun (clip, d) => match d with
       | .text _ t _ => !(t.text.startsWith "line") || decide (clip.Within sc)

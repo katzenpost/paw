@@ -11,6 +11,7 @@ import Paw.Tests.Codec
 import Paw.Tests.Scene
 import Paw.Tests.Layout
 import Paw.Tests.Tree
+import Paw.Tests.Route
 
 open Paw.Tests
 
@@ -23,5 +24,6 @@ def main : IO UInt32 := do
     ("codec", Codec.tests),
     ("scene", Scene.tests),
     ("layout", Layout.tests),
-    ("tree", Tree.tests)].mapM fun (n, t) => runSuite n t
+    ("tree", Tree.tests),
+    ("route", Route.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

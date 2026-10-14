@@ -49,7 +49,11 @@ def id (n : Node Msg) : WidgetId := n.info.id
 def key (n : Node Msg) : Option String := n.info.key
 def visible (n : Node Msg) : Bool := n.info.visible
 def viewport (n : Node Msg) : Rect := n.info.viewport
+def enabled (n : Node Msg) : Bool := n.info.enabled
 def kind (n : Node Msg) : String := n.widget.kind
+
+/-- Whether the node can take keyboard focus. -/
+def focusable (n : Node Msg) : Bool := n.widget.focusable && n.enabled && n.visible
 
 /-- The node's state, if it is an `α`. -/
 def state? (α : Type) [TypeName α] : Node Msg → Option α
@@ -62,6 +66,8 @@ def withInfo (f : NodeInfo → NodeInfo) : Node Msg → Node Msg
     (n.withInfo f).key = (f n.info).key := by cases n; rfl
 
 def hide (n : Node Msg) : Node Msg := n.withInfo ({ · with visible := false })
+
+def disable (n : Node Msg) : Node Msg := n.withInfo ({ · with enabled := false })
 
 /-- Children with any key a sibling before already has dropped. -/
 def dedupKeys (seen : List String) : List (Node Msg) → List (Node Msg)
@@ -311,6 +317,76 @@ def handleList (env : Env) (id : WidgetId) (e : Event) :
     let (c', r1) := handleAt env id e c
     let (cs', r2) := handleList env id e cs
     (c' :: cs', r1 ++ r2)
+end
+
+mutual
+/-- The topmost visible node at `p`: the deepest, and of overlapping siblings the later. -/
+def hit? (p : Point) : Node Msg → Option (Node Msg)
+  | n@(mk _ _ i _ cs) =>
+    if i.visible && i.viewport.contains p then (hitList? p cs).orElse fun _ => some n else none
+
+def hitList? (p : Point) : List (Node Msg) → Option (Node Msg)
+  | [] => none
+  | c :: cs => (hitList? p cs).orElse fun _ => hit? p c
+end
+
+mutual
+theorem hit_spec (p : Point) : ∀ (n m : Node Msg), hit? p n = some m →
+    m.viewport.contains p = true ∧ m.visible = true
+  | mk w st i l cs, m, h => by
+    simp only [hit?] at h
+    split at h
+    · rename_i hc
+      cases hl : hitList? p cs with
+      | some m' =>
+        rw [hl] at h
+        simp only [Option.orElse_some, Option.some.injEq] at h
+        subst h
+        exact hitList_spec p cs m' hl
+      | none =>
+        rw [hl] at h
+        simp only [Option.orElse_none, Option.some.injEq] at h
+        subst h
+        simp only [Bool.and_eq_true] at hc
+        exact ⟨hc.2, hc.1⟩
+    · cases h
+
+theorem hitList_spec (p : Point) : ∀ (cs : List (Node Msg)) (m : Node Msg), hitList? p cs = some m →
+    m.viewport.contains p = true ∧ m.visible = true
+  | [], m, h => by cases h
+  | c :: cs, m, h => by
+    simp only [hitList?] at h
+    cases hl : hitList? p cs with
+    | some m' =>
+      rw [hl] at h
+      simp only [Option.orElse_some, Option.some.injEq] at h
+      subst h
+      exact hitList_spec p cs m' hl
+    | none =>
+      rw [hl] at h
+      simp only [Option.orElse_none] at h
+      exact hit_spec p c m h
+end
+
+mutual
+/-- The nodes that can take focus, in the order tab visits them. -/
+def focusables : Node Msg → List WidgetId
+  | n@(mk _ _ i _ cs) =>
+    if i.visible then (if n.focusable then [i.id] else []) ++ focusablesList cs else []
+
+def focusablesList : List (Node Msg) → List WidgetId
+  | [] => []
+  | c :: cs => focusables c ++ focusablesList cs
+end
+
+mutual
+/-- Every visible node's id and box. -/
+def placements : Node Msg → List (WidgetId × Rect)
+  | mk _ _ i _ cs => if i.visible then (i.id, i.viewport) :: placementsList cs else []
+
+def placementsList : List (Node Msg) → List (WidgetId × Rect)
+  | [] => []
+  | c :: cs => placements c ++ placementsList cs
 end
 
 end Node

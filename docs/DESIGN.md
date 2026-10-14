@@ -209,8 +209,8 @@ The full `Widget` record also has monomer's merge, event and dispose functions. 
 | `Widget` | `render_within`: the Scene lies inside the box | Text stays inside its box; content cannot draw over chrome |
 | `Layout` | `assign_within`; `assign_length` | Children stay inside their parent |
 | `Layout` for stack and grid | `assign_disjoint`: children's boxes do not overlap | Reserved regions cannot be covered by a sibling |
-| `Widget` | `hit_agrees`: the widget hit-testing returns at a point is the topmost one whose Scene covers it | The user clicks what they see |
-| `Widget` | `focus_valid`: focus moves only to visible, enabled, focusable widgets | Focus is the user's |
+| `Node` | `hit_spec`: hit-testing returns only a visible node whose box contains the point; of overlapping siblings, the later, which is drawn on top | The user clicks what they see |
+| `Router` | `nextFocus_mem`: focus moves only to a widget in the focus order, which holds only visible, enabled, focusable widgets | Focus is the user's |
 | `Node` | keys unique among siblings, by `dedupKeys_nodup` | State is never handed to another widget |
 
 Stacks and grids prove `assign_disjoint` once, between them. Each is an `Axial` layout that only decides a size per child along its axis. `Axial.toSeparated` places those sizes one after another and proves all three laws from a lemma about the placement. A new layout along one axis gets the laws by supplying its size function and a proof that it returns one size per child.
@@ -228,7 +228,8 @@ inductive Cap where
 structure Designation where
   private mk ::
   serial : Nat
-  target : ObjId
+  target : WidgetId
+  time : Nat
 
 inductive Origin where
   | input (d : Designation)
@@ -246,10 +247,11 @@ inductive Cmd (caps : List Cap) : Origin → Type where
 
 How these types enforce the rules:
 
-- **Only the runtime makes designations.** `Designation`'s constructor is private to the runtime module. The runtime creates one only after hit-testing has found the target and the checks in the guidelines have passed:
+- **Only the router makes designations.** `Designation`'s constructor is private to `Paw.Route`, which creates one only after hit-testing has found the target and the checks in the guidelines have passed:
   - the target was visible, enabled and unmoved for long enough;
   - the touch was not obscured by another app's overlay;
-  - the event was not synthetic.
+  - the event was not synthetic;
+  - for a key, focus has stayed on the widget for long enough, so typing meant for elsewhere did not follow a focus change.
 - **A command is tied to the event being handled.** The command type is indexed by the origin of that event. An `effect` exists only in `Cmd caps (.input d)`, for the `d` of that event and for an object equal to its target. A designation kept in the model from an earlier event has the wrong index, so it cannot authorize anything later.
 - **Results cannot use authority.** This is a theorem, proved by case analysis:
 

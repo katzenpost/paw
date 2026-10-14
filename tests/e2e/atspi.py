@@ -62,10 +62,19 @@ if window is None:
     sys.exit(1)
 ok("the gallery's window is on the accessibility bus")
 
+# Newer AT-SPI calls the role "button"; older releases call it "push button".
+BUTTON = ("button", "push button")
+
+
+def role(n):
+    r = n.get_role_name()
+    return "button" if r in BUTTON else r
+
+
 nodes = list(walk(window))
 by = {}
 for n in nodes:
-    by.setdefault((n.get_role_name(), n.get_name()), n)
+    by.setdefault((role(n), n.get_name()), n)
 
 if ("button", "+") in by:
     ok("a button is read with its caption")

@@ -75,6 +75,8 @@ structure Router where
   lastClick : Option (WidgetId × Nat × Nat) := none
   /-- Each visible widget's box, and since when it has had it. -/
   placed : Std.HashMap WidgetId (Rect × Nat) := {}
+  /-- Each widget's path from the root, as child indices, for delivering to it directly. -/
+  paths : Std.HashMap WidgetId (List Nat) := {}
   /-- Inputs routed so far. -/
   serial : Nat := 0
   stableMs : Nat := 500
@@ -90,7 +92,9 @@ def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
     match rt.placed[id]? with
     | some (r', t) => if r' == r then m.insert id (r', t) else m.insert id (r, now)
     | none => m.insert id (r, now)
-  { rt with placed }
+  let paths := tree.paths.foldl (init := {}) fun (m : Std.HashMap WidgetId (List Nat)) (id, p) =>
+    m.insert id p
+  { rt with placed, paths }
 
 /-- The widget has kept its box since `stableMs` before `now`. -/
 def stable (rt : Router) (id : WidgetId) (now : Nat) : Bool :=

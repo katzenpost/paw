@@ -37,10 +37,11 @@ def privateUse (n : Nat) : Bool := inRanges n [(0xE000, 0xF8FF), (0xF0000, 0x10F
 
 def noncharacter (n : Nat) : Bool := inRanges n [(0xFDD0, 0xFDEF)] || n % 0x10000 ≥ 0xFFFE
 
-/-- Allowed in text. -/
+/-- Allowed in text. Printable ASCII is decided first, as most text is. -/
 def allowed (c : Char) : Bool :=
   let n := c.toNat
-  !(control n || invisible n || lineSeparator n || privateUse n || noncharacter n)
+  if n < 0x7F then n ≥ 0x20
+  else !(control n || invisible n || lineSeparator n || privateUse n || noncharacter n)
 
 def bidiControl (n : Nat) : Bool :=
   inRanges n [(0x202A, 0x202E), (0x2066, 0x2069)] || n == 0x200E || n == 0x200F || n == 0x61C
@@ -58,7 +59,7 @@ def allowedInName (c : Char) : Bool :=
 
 /-- Combining marks, kept on the character before them, a few at a time. -/
 def combining (n : Nat) : Bool :=
-  inRanges n [(0x300, 0x36F), (0x483, 0x489), (0x591, 0x5BD), (0x5BF, 0x5BF), (0x5C1, 0x5C2),
+  n ≥ 0x300 && inRanges n [(0x300, 0x36F), (0x483, 0x489), (0x591, 0x5BD), (0x5BF, 0x5BF), (0x5C1, 0x5C2),
     (0x5C4, 0x5C5), (0x5C7, 0x5C7), (0x610, 0x61A), (0x64B, 0x65F), (0x670, 0x670),
     (0x6D6, 0x6DC), (0x6DF, 0x6E4), (0x6E7, 0x6E8), (0x6EA, 0x6ED), (0x1AB0, 0x1AFF),
     (0x1DC0, 0x1DFF), (0x20D0, 0x20FF), (0xFE20, 0xFE2F)]

@@ -4,6 +4,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Paw.Widget
+import Std.Data.HashSet
+import Std.Data.HashMap
 
 /-! # The widget tree
 
@@ -29,6 +31,8 @@ structure NodeInfo where
   viewport : Rect := default
   /-- Where the children are laid out: the viewport, or for a scroll, the shifted content. -/
   content : Rect := default
+  /-- What the node asks for, as `measure` last found it. -/
+  req : SizeReq × SizeReq := ({}, {})
   deriving Repr, Inhabited
 
 inductive Node (Msg : Type) where
@@ -75,15 +79,15 @@ def hide (n : Node Msg) : Node Msg := n.withInfo ({ · with visible := false })
 def disable (n : Node Msg) : Node Msg := n.withInfo ({ · with enabled := false })
 
 /-- Children with any key a sibling before already has dropped. -/
-def dedupKeys (seen : List String) : List (Node Msg) → List (Node Msg)
+def dedupKeys (seen : Std.HashSet String) : List (Node Msg) → List (Node Msg)
   | [] => []
   | c :: cs => match c.key with
     | some k =>
-      if k ∈ seen then c.withInfo ({ · with key := none }) :: dedupKeys seen cs
-      else c :: dedupKeys (k :: seen) cs
+      if seen.contains k then c.withInfo ({ · with key := none }) :: dedupKeys seen cs
+      else c :: dedupKeys (seen.insert k) cs
     | none => c :: dedupKeys seen cs
 
-theorem dedupKeys_spec (seen : List String) (cs : List (Node Msg)) :
+theorem dedupKeys_spec (seen : Std.HashSet String) (cs : List (Node Msg)) :
     ((dedupKeys seen cs).filterMap (·.key)).Nodup ∧
       ∀ k ∈ (dedupKeys seen cs).filterMap (·.key), k ∉ seen := by
   induction cs generalizing seen with
@@ -96,32 +100,33 @@ theorem dedupKeys_spec (seen : List String) (cs : List (Node Msg)) :
       · simp only [List.filterMap_cons, key_withInfo]
         exact ih seen
       · rename_i hnot
-        have ⟨h1, h2⟩ := ih (k :: seen)
-        simp only [List.filterMap_cons, hk, List.nodup_cons, List.mem_cons, not_or] at h2 ⊢
+        have ⟨h1, h2⟩ := ih (seen.insert k)
+        simp only [Std.HashSet.mem_insert, beq_iff_eq, not_or] at h2
+        simp only [List.filterMap_cons, hk, List.nodup_cons, List.mem_cons]
         refine ⟨⟨fun hm => (h2 k hm).1 rfl, h1⟩, ?_⟩
         intro k' hk'
         rcases hk' with rfl | hk'
-        · exact hnot
+        · exact fun hm => hnot (Std.HashSet.mem_iff_contains.mp hm)
         · exact (h2 k' hk').2
     · rename_i hk
       simp only [List.filterMap_cons, hk]
       exact ih seen
 
-theorem dedupKeys_nodup (cs : List (Node Msg)) : ((dedupKeys [] cs).filterMap (·.key)).Nodup :=
-  (dedupKeys_spec [] cs).1
+theorem dedupKeys_nodup (cs : List (Node Msg)) : ((dedupKeys ∅ cs).filterMap (·.key)).Nodup :=
+  (dedupKeys_spec ∅ cs).1
 
 /-- A widget with no children. -/
 def leaf (w : Widget Msg) (key : Option String := none) : Node Msg := mk w w.init { key } none []
 
 /-- Children laid out by `l`. -/
 def container (l : Layout) (children : List (Node Msg)) (key : Option String := none) : Node Msg :=
-  mk (Widget.container l.name) (Dynamic.mk ({} : NoState)) { key } (some l) (dedupKeys [] children)
+  mk (Widget.container l.name) (Dynamic.mk ({} : NoState)) { key } (some l) (dedupKeys ∅ children)
 
 /-- Children laid out by `l`, held by a widget of the container's own, such as a scroll that draws
 bars and handles the wheel. -/
 def containerWith (w : Widget Msg) (l : Layout) (children : List (Node Msg))
     (key : Option String := none) : Node Msg :=
-  mk w w.init { key } (some l) (dedupKeys [] children)
+  mk w w.init { key } (some l) (dedupKeys ∅ children)
 
 instance : Inhabited (Node Msg) := ⟨leaf (Widget.container "")⟩
 
@@ -182,8 +187,8 @@ def carryState : Node Msg → Node Msg → Node Msg
 /-- The merge's running state: the next free id, requests, and ids of old nodes merged. -/
 structure MergeState (Msg : Type) where
   next : Nat
-  reqs : List (Req Msg) := []
-  used : List WidgetId := []
+  reqs : Array (Req Msg) := #[]
+  used : Std.HashSet WidgetId := {}
 
 /-- `n` as a new node, with fresh ids. -/
 def freshen (n : Node Msg) (s : MergeState Msg) : Node Msg × MergeState Msg :=
@@ -194,24 +199,25 @@ mutual
 /-- `new` merged with `old`, which it `canMerge` with. -/
 def mergeNode (env : Env) : Node Msg → Node Msg → MergeState Msg → Node Msg × MergeState Msg
   | mk w st i l cs, old, s =>
-    let s := { s with used := old.id :: s.used }
+    let s := { s with used := s.used.insert old.id }
     let oldKids := old.children
-    let byKey := oldKids.filterMap fun c => c.key.map (·, c)
+    let byKey : Std.HashMap String (Node Msg) :=
+      oldKids.foldl (init := {}) fun m c => match c.key with | some k => m.insert k c | none => m
     let (cs', s) := mergeList env cs oldKids byKey s
     let gone := oldKids.filter fun c => !s.used.contains c.id
-    let s := { s with reqs := s.reqs ++ gone.flatMap dispose }
+    let s := { s with reqs := s.reqs ++ (gone.flatMap dispose).toArray }
     (carryState (mk w st { i with id := old.id } l cs') old, s)
 
 /-- `n` merged with the old child with its key, if they can merge, else new. -/
-def mergeKeyed (env : Env) (n : Node Msg) (byKey : List (String × Node Msg)) (s : MergeState Msg) :
+def mergeKeyed (env : Env) (n : Node Msg) (byKey : Std.HashMap String (Node Msg)) (s : MergeState Msg) :
     Node Msg × MergeState Msg :=
-  match n.key.bind (byKey.lookup ·) with
+  match n.key.bind (byKey[·]?) with
   | some k => if canMerge n k then mergeNode env n k s else freshen n s
   | none => freshen n s
 
 /-- monomer's `mergeChildSeq`: each new child merges with the old child in its place if they
 can, else with the old child with its key if they can, else it is new. -/
-def mergeList (env : Env) : List (Node Msg) → List (Node Msg) → List (String × Node Msg) →
+def mergeList (env : Env) : List (Node Msg) → List (Node Msg) → Std.HashMap String (Node Msg) →
     MergeState Msg → List (Node Msg) × MergeState Msg
   | [], _, _, s => ([], s)
   | n :: ns, o :: os, byKey, s =>
@@ -237,8 +243,8 @@ def merge (new : Node Msg) (env : Env) (old : Node Msg) (next : Nat) :
     if canMerge new old then mergeNode env new old { next }
     else
       let (n, s) := freshen new { next }
-      (n, { s with reqs := s.reqs ++ old.dispose })
-  (n, s.reqs, s.next)
+      (n, { s with reqs := s.reqs ++ old.dispose.toArray })
+  (n, s.reqs.toList, s.next)
 
 mutual
 /-- What the node asks for: a leaf's widget decides, a container's layout. -/
@@ -253,20 +259,40 @@ def itemList (env : Env) : List (Node Msg) → List Item
     { w, h, visible := c.visible } :: itemList env cs
 end
 
+/-- Children as their layout sees them, from the size requests `measure` kept. -/
+def keptItems (cs : List (Node Msg)) : List Item :=
+  cs.map fun c => { w := c.info.req.1, h := c.info.req.2, visible := c.visible }
+
 mutual
-/-- The node placed in `v`, and its children where its layout puts them. -/
-def resize (env : Env) : Node Msg → Rect → Node Msg
+/-- The node with every node's size request worked out and kept, bottom up, once each. -/
+def measure (env : Env) : Node Msg → Node Msg
+  | mk w st i none cs => mk w st { i with req := w.sizeReq (envAt env i) st } none cs
+  | mk w st i (some l) cs =>
+    let cs := measureList env cs
+    mk w st { i with req := l.sizeReq (keptItems cs) } (some l) cs
+
+def measureList (env : Env) : List (Node Msg) → List (Node Msg)
+  | [] => []
+  | c :: cs => measure env c :: measureList env cs
+end
+
+mutual
+/-- A measured node placed in `v`, and its children where its layout puts them. -/
+def place (env : Env) : Node Msg → Rect → Node Msg
   | mk w st i none cs, v => mk w st { i with viewport := v, content := v } none cs
   | mk w st i (some l) cs, v =>
-    let items := itemList env cs
-    let content := w.content (envAt env i) st v (l.sizeReq items)
-    mk w st { i with viewport := v, content } (some l) (resizeList env cs (l.assign content items))
+    let items := keptItems cs
+    let content := w.content (envAt env i) st v i.req
+    mk w st { i with viewport := v, content } (some l) (placeList env cs (l.assign content items))
 
-def resizeList (env : Env) : List (Node Msg) → List Rect → List (Node Msg)
-  | c :: cs, r :: rs => resize env c r :: resizeList env cs rs
+def placeList (env : Env) : List (Node Msg) → List Rect → List (Node Msg)
+  | c :: cs, r :: rs => place env c r :: placeList env cs rs
   | cs, [] => cs
   | [], _ => []
 end
+
+/-- The node placed in `v`, and its children where its layout puts them. -/
+def resize (env : Env) (n : Node Msg) (v : Rect) : Node Msg := place env (measure env n) v
 
 mutual
 /-- What the node and its descendants draw, within its box. -/
@@ -339,6 +365,25 @@ def handleList (env : Env) (id : WidgetId) (e : Event) :
     let (cs', r2) := handleList env id e cs
     (c' :: cs', r1.orElse fun _ => r2)
 end
+
+/-- `e` to the node at `path`, and if it does not handle it, to its ancestors in turn, nearest
+first: the tree, and the requests of the node that handled it, or `none` if none did. One walk
+down the path. -/
+def bubbleAt (env : Env) (e : Event) : List Nat → Node Msg → Node Msg × Option (List (Req Msg))
+  | path, mk w st i l cs =>
+    let own (cs : List (Node Msg)) : Node Msg × Option (List (Req Msg)) :=
+      match w.handle (envAt env i) st i.viewport e with
+      | some (st', reqs) => (mk w st' i l cs, some reqs)
+      | none => (mk w st i l cs, none)
+    match path with
+    | [] => own cs
+    | k :: rest =>
+      match cs[k]? with
+      | some c =>
+        match bubbleAt env e rest c with
+        | (c', some reqs) => (mk w st i l (cs.set k c'), some reqs)
+        | (c', none) => own (cs.set k c')
+      | none => (mk w st i l cs, none)
 
 /-- The ids of the node with `id` and its ancestors, nearest first. -/
 def lineage (n : Node Msg) (id : WidgetId) : List WidgetId :=

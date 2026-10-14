@@ -206,7 +206,8 @@ def textArea {Msg : Type} (value : String) (onChange : String → Msg) (cfg : Te
         | none => some (st, [])
       match ev with
       | .text s | .paste s => go (e.insert (cleanText s) cfg.maxLength)
-      | .key .enter _ true => go (e.insert ['\n'] cfg.maxLength)
+      -- With Ctrl, Enter and paging are left to the widgets around, for bindings such as sending.
+      | .key .enter m true => if m.ctrl then none else go (e.insert ['\n'] cfg.maxLength)
       | .key .backspace m true => go (if m.ctrl then e.deleteWordBack else e.backspace)
       | .key .delete m true => go (if m.ctrl then e.deleteWordForward else e.delete)
       | .key .left m true => go (if m.ctrl then e.wordLeft m.shift else e.left m.shift)
@@ -214,9 +215,9 @@ def textArea {Msg : Type} (value : String) (onChange : String → Msg) (cfg : Te
       | .key .up m true => go (e.moveTo (if k == 0 then 0 else nearest env rs (k - 1) x) m.shift) (goalX := some x)
       | .key .down m true =>
         go (e.moveTo (if k + 1 ≥ rs.length then chars.length else nearest env rs (k + 1) x) m.shift) (goalX := some x)
-      | .key .pageUp m true => go (e.moveTo (nearest env rs (k - page) x) m.shift) (goalX := some x)
+      | .key .pageUp m true => if m.ctrl then none else go (e.moveTo (nearest env rs (k - page) x) m.shift) (goalX := some x)
       | .key .pageDown m true =>
-        go (e.moveTo (if k + page ≥ rs.length then chars.length else nearest env rs (k + page) x) m.shift)
+        if m.ctrl then none else go (e.moveTo (if k + page ≥ rs.length then chars.length else nearest env rs (k + page) x) m.shift)
           (goalX := some x)
       | .key .home m true => go (e.moveTo (if m.ctrl then 0 else Edit.lineStart chars e.cursor) m.shift)
       | .key .end_ m true => go (e.moveTo (if m.ctrl then chars.length else Edit.lineEnd chars e.cursor) m.shift)

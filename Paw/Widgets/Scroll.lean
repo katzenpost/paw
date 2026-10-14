@@ -113,8 +113,8 @@ def scrollWidgetFor {Msg : Type} (axes : ScrollAxes) (follow : Bool := false) : 
             { st with offsetX := clampOffset (clampOffset st.offsetX c.width i.width + dx * scrollStep) c.width i.width }
           else st
         some (st, [])
-      | .key .pageDown _ true => if axes.down then some (byY (i.height - scrollStep), []) else none
-      | .key .pageUp _ true => if axes.down then some (byY (scrollStep - i.height), []) else none
+      | .key .pageDown m true => if axes.down && !m.ctrl then some (byY (i.height - scrollStep), []) else none
+      | .key .pageUp m true => if axes.down && !m.ctrl then some (byY (scrollStep - i.height), []) else none
       | _ => none
     access := fun _ _ => some { role := .scrollView } }
 

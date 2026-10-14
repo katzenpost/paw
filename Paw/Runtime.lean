@@ -109,7 +109,9 @@ def applyReqs (rt : Runtime app) (o : Origin) (reqs : List (Req app.Msg)) :
 /-- `d` to its widget: the runtime after, the outputs, and whether any widget handled it. -/
 def deliver (rt : Runtime app) (d : Delivery) : Runtime app × List (Output app.Msg) × Bool :=
   let (tree, reqs) := match rt.router.paths[d.target]? with
-    | some path => rt.tree.bubbleAt rt.env d.event path
+    | some path => match rt.tree.bubbleAt rt.env d.event path with
+      | some (tree, reqs) => (tree, some reqs)
+      | none => (rt.tree, none)
     | none => rt.tree.bubble rt.env d.target d.event
   let o : Origin := match d.designation with | some des => .user des | none => .other
   let (rt, outs) := { rt with tree }.applyReqs o (reqs.getD [])

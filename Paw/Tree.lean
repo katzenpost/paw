@@ -367,23 +367,21 @@ def handleList (env : Env) (id : WidgetId) (e : Event) :
 end
 
 /-- `e` to the node at `path`, and if it does not handle it, to its ancestors in turn, nearest
-first: the tree, and the requests of the node that handled it, or `none` if none did. One walk
-down the path. -/
-def bubbleAt (env : Env) (e : Event) : List Nat → Node Msg → Node Msg × Option (List (Req Msg))
+first: the tree with the new state, and the requests of the node that handled it; or `none`, with
+the tree untouched, if none did. One walk down the path. -/
+def bubbleAt (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Msg × List (Req Msg))
   | path, mk w st i l cs =>
-    let own (cs : List (Node Msg)) : Node Msg × Option (List (Req Msg)) :=
-      match w.handle (envAt env i) st i.viewport e with
-      | some (st', reqs) => (mk w st' i l cs, some reqs)
-      | none => (mk w st i l cs, none)
+    let own (cs : List (Node Msg)) : Option (Node Msg × List (Req Msg)) :=
+      (w.handle (envAt env i) st i.viewport e).map fun (st', reqs) => (mk w st' i l cs, reqs)
     match path with
     | [] => own cs
     | k :: rest =>
       match cs[k]? with
       | some c =>
         match bubbleAt env e rest c with
-        | (c', some reqs) => (mk w st i l (cs.set k c'), some reqs)
-        | (c', none) => own (cs.set k c')
-      | none => (mk w st i l cs, none)
+        | some (c', reqs) => some (mk w st i l (cs.set k c'), reqs)
+        | none => own cs
+      | none => none
 
 /-- The ids of the node with `id` and its ancestors, nearest first. -/
 def lineage (n : Node Msg) (id : WidgetId) : List WidgetId :=
@@ -486,6 +484,22 @@ def keyedPlacementsList : List (Node Msg) → List (String × Rect)
   | [] => []
   | c :: cs => keyedPlacements c ++ keyedPlacementsList cs
 end
+
+mutual
+/-- Every visible node's id, box and path from the root, added to `acc` in preorder. -/
+def indexInto (path : Array Nat) (acc : Array (WidgetId × Rect × List Nat)) :
+    Node Msg → Array (WidgetId × Rect × List Nat)
+  | mk _ _ i _ cs =>
+    if i.visible then indexList path 0 (acc.push (i.id, i.viewport, path.toList)) cs else acc
+
+def indexList (path : Array Nat) (idx : Nat) (acc : Array (WidgetId × Rect × List Nat)) :
+    List (Node Msg) → Array (WidgetId × Rect × List Nat)
+  | [] => acc
+  | c :: cs => indexList path (idx + 1) (indexInto (path.push idx) acc c) cs
+end
+
+/-- Every visible node's id, box and path from the root, in preorder. -/
+def index (n : Node Msg) : Array (WidgetId × Rect × List Nat) := indexInto #[] #[] n
 
 mutual
 /-- Every visible node's id and box. -/

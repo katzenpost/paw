@@ -86,14 +86,17 @@ namespace Router
 
 variable {Msg : Type}
 
-/-- Notes where every widget is at `now`, after a layout. -/
+/-- Notes where every widget is at `now`, after a layout, and its path for delivering to it. -/
 def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
-  let placed := tree.placements.foldl (init := {}) fun (m : Std.HashMap WidgetId (Rect × Nat)) (id, r) =>
-    match rt.placed[id]? with
-    | some (r', t) => if r' == r then m.insert id (r', t) else m.insert id (r, now)
-    | none => m.insert id (r, now)
-  let paths := tree.paths.foldl (init := {}) fun (m : Std.HashMap WidgetId (List Nat)) (id, p) =>
-    m.insert id p
+  let idx := tree.index
+  let (placed, paths) := idx.foldl (init := (Std.HashMap.emptyWithCapacity idx.size,
+      Std.HashMap.emptyWithCapacity idx.size))
+    fun ((placed : Std.HashMap WidgetId (Rect × Nat)), (paths : Std.HashMap WidgetId (List Nat)))
+        (id, r, path) =>
+      let since := match rt.placed[id]? with
+        | some (r', t) => if r' == r then t else now
+        | none => now
+      (placed.insert id (r, since), paths.insert id path)
   { rt with placed, paths }
 
 /-- The widget has kept its box since `stableMs` before `now`. -/

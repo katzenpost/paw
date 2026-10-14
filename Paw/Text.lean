@@ -157,13 +157,40 @@ def trusted (s : String) : SafeText := (trusted? s).getD (filter s)
 instance : Append SafeText := ⟨fun a b => ⟨a.text ++ b.text, by
   rw [String.toList_append, List.all_append, a.ok, b.ok]; rfl⟩⟩
 
+/-- One line of characters from elsewhere, filtered. -/
+def filterChars (cs : List Char) (maxMarks : Nat := 4) : SafeText :=
+  ⟨String.ofList ((capMarks maxMarks cs).map (clean allowed)), by
+    rw [String.toList_ofList]; exact all_map_clean _⟩
+
+/-- The lines of `cs`, each reversed: split at newlines, a carriage return before a newline
+dropped, and tabs as `tab` spaces. One pass. -/
+def splitLines (tab : Nat) (cs : List Char) : List (List Char) := Id.run do
+  let mut lines : Array (List Char) := #[]
+  let mut cur : List Char := []
+  let mut rest := cs
+  while true do
+    match rest with
+    | [] => break
+    | '\r' :: '\n' :: more | '\n' :: more =>
+      lines := lines.push cur
+      cur := []
+      rest := more
+    | '\t' :: more =>
+      cur := (List.replicate tab ' ') ++ cur
+      rest := more
+    | c :: more =>
+      cur := c :: cur
+      rest := more
+  return (lines.push cur).toList
+
 /-- A text as its lines, filtered: tabs become spaces, a carriage return before a newline goes,
 and of more than `maxLines` lines, the last kept says how many more there were. -/
 def lines (s : String) (maxLines : Nat := 20) (tabWidth : Nat := 4) : List SafeText :=
-  let tab := String.ofList (List.replicate tabWidth ' ')
-  let ls := ((s.replace "\r\n" "\n").splitOn "\n").map fun l => filter (l.replace "\t" tab)
-  if ls.length ≤ maxLines then ls
-  else ls.take (maxLines - 1) ++ [trusted s!"[{ls.length - (maxLines - 1)} more lines not shown]"]
+  let ls := splitLines tabWidth s.toList
+  let n := ls.length
+  if n ≤ maxLines then ls.map fun l => filterChars l.reverse
+  else (ls.take (maxLines - 1)).map (fun l => filterChars l.reverse) ++
+    [trusted s!"[{n - (maxLines - 1)} more lines not shown]"]
 
 end SafeText
 

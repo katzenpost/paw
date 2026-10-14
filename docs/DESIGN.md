@@ -325,10 +325,10 @@ A node's constructor is private. The constructors the library offers drop a key 
 ```lean
 def Node.container (l : Layout) (children : List (Node Msg)) (key : Option String := none) :
     Node Msg :=
-  mk (Widget.container l.name) ({} : NoState) { key } (some l) (dedupKeys [] children)
+  mk (Widget.container l.name) (Dynamic.mk ({} : NoState)) { key } (some l) (dedupKeys ∅ children)
 
 theorem Node.dedupKeys_nodup (cs : List (Node Msg)) :
-    ((dedupKeys [] cs).filterMap (·.key)).Nodup
+    ((dedupKeys ∅ cs).filterMap (·.key)).Nodup
 ```
 
 So text from elsewhere may be used as a key: a message's id, say. Two siblings never share a key, so a message cannot take over another's state by claiming its id. At worst it loses its own key and merges by position.
@@ -362,6 +362,18 @@ One step for input, as in monomer's `mainLoop`:
 `Runtime.run` is the IO loop around `step`, over a `Platform`, a structure of IO functions: poll events, the time, the window size, measure text, perform a request. The Rust layer provides one, and tests a scripted fake. Tasks run with `IO.asTask`; their results are stepped in with origin `other`.
 
 Nodes, trees and the runtime must be in `Type` for `IO` to hold them. So a widget keeps its state as a `Dynamic`. Widgets are still written over their own state type, as a `Widget.Spec Msg σ` whose `build` wraps each function, and `render_within` carries through the wrapping.
+
+## Performance
+
+Latency in a GUI is seen, so each layer has benchmarks: `make bench-lean` runs LeanBench suites for text filtering, the byte formats, layout, the tree, routing, whole runtime steps and the calls into Rust, and `make bench-rust` times decoding, drawing and measuring in Rust. The budget is one input handled, from routing to the new scene, in well under a millisecond for an ordinary view, and a frame drawn in a few milliseconds, inside the 16 ms of a 60 Hz display.
+
+What the benchmarks have shaped so far:
+
+- **Nothing scans a list per element.** Merge finds keyed children through a hash map and records the old nodes it used in a hash set; key de-duplication keeps the keys seen in a hash set, and its uniqueness proof is about that set.
+- **An event goes straight to its widget.** The router keeps each widget's path when it notes where widgets are, and an event walks down that path once, trying the deepest widget first and then each ancestor, rather than searching the tree for each of them.
+- **Size requests are worked out once per layout.** `measure` computes every node's request bottom up and keeps it, and `place` lays out from the kept requests.
+- **Moving the pointer over nothing that reacts costs no layout or drawing.** The scene is drawn again only if something changed.
+- **Most text is ASCII**, so the character checks decide printable ASCII first.
 
 ## Testing
 

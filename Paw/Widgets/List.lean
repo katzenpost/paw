@@ -91,8 +91,8 @@ def selectListBox {Msg : Type} (count : Nat) (chosen : Option Nat) (pick : Nat â
       | .key .up _ true => go (cur - 1)
       | .key .home _ true => go 0
       | .key .end_ _ true => go (count - 1)
-      | .key .pageDown _ true => go (cur + page)
-      | .key .pageUp _ true => go (cur - page)
+      | .key .pageDown m true => if m.ctrl then none else go (cur + page)
+      | .key .pageUp m true => if m.ctrl then none else go (cur - page)
       | .wheel _ _ dy => some ({ offset := clampOffset (st.offset + dy * scrollStep) ch viewH }, [])
       | .focus | .blur => some (st, [])
       | _ => none

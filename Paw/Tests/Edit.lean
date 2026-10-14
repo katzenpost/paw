@@ -22,17 +22,22 @@ inductive Msg where
   | name (s : String)
   | notes (s : String)
   | pass (s : Secret)
+  | send
+  | page
   deriving Inhabited
 
 structure Model where
   name : String := ""
   notes : String := ""
   pass : Secret := Secret.empty
+  sent : Nat := 0
+  paged : Nat := 0
 
-instance : BEq Model := ⟨fun a b => a.name == b.name && a.notes == b.notes && a.pass.eq b.pass⟩
+instance : BEq Model := ⟨fun a b => a.name == b.name && a.notes == b.notes && a.pass.eq b.pass &&
+  a.sent == b.sent && a.paged == b.paged⟩
 
 def view (m : Model) : Node Msg :=
-  Ui.col [Ui.textField m.name .name {} "name", Ui.passwordField m.pass .pass "pass",
+  Ui.keystroke [({ key := .enter, ctrl := true }, .send), ({ key := .pageDown, ctrl := true }, .page)] <| Ui.col [Ui.textField m.name .name {} "name", Ui.passwordField m.pass .pass "pass",
     -- In a row, so that it keeps its width: 80 pixels inside its padding.
     Ui.row [Ui.width (px 96) (Ui.textArea m.notes .notes { rows := 3 } "notes")]]
 
@@ -40,6 +45,8 @@ def update : (o : Origin) → Msg → UpdateM Model Msg [] o Unit
   | _, .name s => modify fun (m, cs) => ({ m with name := s }, cs)
   | _, .notes s => modify fun (m, cs) => ({ m with notes := s }, cs)
   | _, .pass s => modify fun (m, cs) => ({ m with pass := s }, cs)
+  | _, .send => modify fun (m, cs) => ({ m with sent := m.sent + 1 }, cs)
+  | _, .page => modify fun (m, cs) => ({ m with paged := m.paged + 1 }, cs)
 
 def app : App [] := { Model := Model, Msg := Msg, init := {}, view, update }
 
@@ -122,6 +129,10 @@ def tests : TestM Unit := do
   let rt := key rt .enter 1200
   let rt := type rt "four" 1300
   checkEq "Enter puts a newline" "one two three\nfour" rt.model.notes
+  let sent := key rt .enter 1310 { ctrl := true }
+  checkEq "Ctrl+Enter is left to the bindings around the area" 1 sent.model.sent
+  checkEq "and puts no newline" "one two three\nfour" sent.model.notes
+  checkEq "so is Ctrl+PageDown" 1 (key rt .pageDown 1320 { ctrl := true }).model.paged
   let rt := type rt "\ttab\x1b" 1400
   checkEq "typing keeps newlines but no other controls, and tabs as spaces" "one two three\nfour tab"
     rt.model.notes

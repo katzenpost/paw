@@ -9,9 +9,17 @@ on:
   merge_group:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       ELAN_VERSION: 4.2.4
       ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
@@ -30,13 +38,16 @@ jobs:
           ./elan-init -y --default-toolchain none --no-modify-path
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - run: elan toolchain install "$(cat lean-toolchain)"
-      - run: rustup component add clippy
+      - run: cd rust && rustup toolchain install
       - uses: actions/cache@v4
         with:
           path: |
             .lake
             rust/target
-          key: build-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'rust/Cargo.lock') }}
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: build-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
+          restore-keys: build-
       - run: make ci
       - if: failure()
         uses: actions/upload-artifact@v4

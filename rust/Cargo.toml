@@ -19,3 +19,6 @@ winit = "0.30"
 
 [profile.release]
 panic = "abort"
+
+[dev-dependencies]
+benchmark = "0.8"

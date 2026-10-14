@@ -4,6 +4,9 @@ open Lake DSL System
 package paw where
   leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩]
 
+require LeanBench from git
+  "https://github.com/alok/LeanBench" @ "250d2a892bf8c91ec3ae5de8517793e18379f97b"
+
 @[default_target]
 lean_lib Paw
 
@@ -20,6 +23,10 @@ lean_exe «paw-test» where
 /-- Draws scenes offscreen and compares them with the approved images. -/
 lean_exe «paw-goldens» where
   root := `Paw.Tests.Goldens
+
+/-- Benchmarks of each layer, with LeanBench. -/
+lean_exe «paw-bench» where
+  root := `Paw.Bench.Main
 
 /-- Lists public definitions that no test reaches. -/
 lean_exe «paw-coverage» where

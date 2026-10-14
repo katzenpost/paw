@@ -4,7 +4,7 @@
 # Rust comes from rustup and Lean from elan.
 export PATH := $(HOME)/.cargo/bin:$(HOME)/.elan/bin:$(PATH)
 
-.PHONY: all build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland
+.PHONY: all build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland bench bench-lean bench-rust
 
 all: test coverage goldens
 
@@ -45,3 +45,15 @@ e2e-x11:
 e2e-wayland:
 	lake build paw-gallery
 	sh tests/e2e/wayland.sh
+
+# Benchmarks take a while; run one suite with e.g. `make bench-lean BENCH_ARGS="--where 'suite(tree)'"`.
+BENCH_ARGS ?=
+
+bench: bench-lean bench-rust
+
+bench-lean:
+	lake build paw-bench
+	.lake/build/bin/paw-bench $(BENCH_ARGS)
+
+bench-rust:
+	cd rust && cargo run --quiet --release --example bench

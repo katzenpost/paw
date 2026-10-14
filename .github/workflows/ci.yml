@@ -51,7 +51,7 @@ jobs:
       - name: install display tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xdotool xclip sway wtype wlrctl \
+          sudo apt-get install -y --no-install-recommends xvfb xdotool xclip sway wtype \
             wl-clipboard jq libxkbcommon-x11-0
       - name: install elan
         run: |

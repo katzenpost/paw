@@ -14,7 +14,10 @@ finish() {
   exit 0
 }
 
-command -v wlrctl > /dev/null || { fail "wlrctl is needed for a virtual pointer"; finish; }
+mkfifo "$WORK/pointer"
+"$PWD/rust/target/release/examples/vpointer" 1024 768 < "$WORK/pointer" > "$WORK/pointer.out" 2>&1 &
+exec 3> "$WORK/pointer"
+wait_for "$WORK/pointer.out" '^ready' || { fail "a virtual pointer"; finish; }
 start_gallery
 wait_for "$LAYOUT" '^inc ' || { fail "the gallery reported its layout"; finish; }
 sleep 1
@@ -25,13 +28,12 @@ set -- $ORIGIN
 OX=$1
 OY=$2
 
-# A headless sway has no pointer of its own; wlrctl adds a virtual one. It moves relative to
-# where it is, so it goes to the top left corner first.
+# A headless sway has no pointer of its own; vpointer adds a virtual one that stays connected,
+# fed commands through a pipe.
 click() {
   set -- $(center "$1")
-  wlrctl pointer move -10000 -10000
-  wlrctl pointer move $((OX + $1)) $((OY + $2))
-  wlrctl pointer click left
+  echo "move $((OX + $1)) $((OY + $2))" >&3
+  echo "click" >&3
   sleep 0.3
 }
 
@@ -40,13 +42,13 @@ click inc
 expect "count=2" "clicks reach the app"
 click name
 sleep 0.6
-wtype "Ada"
+wtype -s 200 -d 30 "Ada"
 expect "name=Ada " "typing reaches a text field"
 click agree
 expect "agree=true" "a checkbox toggles"
 click draft
 sleep 0.6
-wtype "plums"
+wtype -s 200 -d 30 "plums"
 click add
 expect "plums" "an item is added"
 click link
@@ -65,6 +67,6 @@ else
   echo "skip copy reaches the clipboard (no wl-paste)"
 fi
 
-wtype -M ctrl q -m ctrl
+wtype -s 200 -M ctrl q -m ctrl
 expect_exit "ctrl-q quits"
 finish

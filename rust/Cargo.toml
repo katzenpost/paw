@@ -22,3 +22,5 @@ panic = "abort"
 
 [dev-dependencies]
 benchmark = "0.8"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }

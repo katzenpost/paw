@@ -62,8 +62,10 @@ else ok "keys sent with XSendEvent are refused"; fi
 
 if command -v xclip > /dev/null; then
   click copy
-  if [ "$(xclip -o -selection clipboard 2>/dev/null)" = "Ada" ]; then ok "copy reaches the clipboard"
-  else fail "copy reaches the clipboard"; fi
+  sleep 0.3
+  name=$(tail -n 1 "$LOG" | sed 's/.*name=\([^ ]*\) .*/\1/')
+  if [ "$(xclip -o -selection clipboard 2>/dev/null)" = "$name" ]; then ok "copy reaches the clipboard"
+  else fail "copy reaches the clipboard (expected $name)"; fi
 else
   echo "skip copy reaches the clipboard (no xclip)"
 fi

@@ -44,6 +44,7 @@ e2e-x11:
 
 e2e-wayland:
 	lake build paw-gallery
+	cd rust && cargo build --quiet --release --example vpointer
 	sh tests/e2e/wayland.sh
 
 # Benchmarks take a while; run one suite with e.g. `make bench-lean BENCH_ARGS="--where 'suite(tree)'"`.

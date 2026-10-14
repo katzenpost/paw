@@ -1313,6 +1313,8 @@ dependencies = [
  "lean-sys",
  "softbuffer",
  "tiny-skia",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "winit",
 ]
 

@@ -374,6 +374,7 @@ What the benchmarks have shaped so far:
 - **Size requests are worked out once per layout.** `measure` computes every node's request bottom up and keeps it, and `place` lays out from the kept requests.
 - **Moving the pointer over nothing that reacts costs no layout or drawing.** The scene is drawn again only if something changed.
 - **Most text is ASCII**, so the character checks decide printable ASCII first.
+- **A view need not be rebuilt where nothing changed.** `Ui.lazy arg view` makes a deferred node. Before a merge, `resolve` matches it against the tree on screen: if the old node was built from an argument equal to `arg`, it is kept whole, without being built, merged or disposed; otherwise `view arg` is built then. This is Elm's `Html.Lazy`. Arguments are compared with `BEq`, never a hash: text from elsewhere could be crafted to collide a hash, and a collision would leave a stale row on screen. A long list whose rows are lazy costs, when one row changes, about one row.
 
 ## Testing
 

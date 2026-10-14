@@ -170,6 +170,8 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
                 self.events.push(WindowEvent::Resize(units(s.width as f64, scale), units(s.height as f64, scale)))
             }
             WE::RedrawRequested => self.present(),
+            WE::Focused(f) => self.events.push(WindowEvent::Focus(f)),
+            WE::Occluded(o) => self.events.push(WindowEvent::Visible(!o)),
             WE::ModifiersChanged(m) => {
                 let s = m.state();
                 self.mods = Mods { shift: s.shift_key(), ctrl: s.control_key(), alt: s.alt_key(), sup: s.super_key() };
@@ -260,13 +262,15 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Events since the last poll, waiting up to `timeout_ms` for the first.
+/// Events since the last poll, waiting up to `timeout_ms` for the first, or with `u32::MAX`, until
+/// there is one.
 pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
     LOOP.with(|l| {
         APP.with(|a| {
             let (mut l, mut a) = (l.borrow_mut(), a.borrow_mut());
             let (Some(el), Some(app)) = (l.as_mut(), a.as_mut()) else { return vec![WindowEvent::Close] };
-            let status = el.pump_app_events(Some(Duration::from_millis(timeout_ms as u64)), app);
+            let timeout = (timeout_ms != u32::MAX).then(|| Duration::from_millis(timeout_ms as u64));
+            let status = el.pump_app_events(timeout, app);
             // The loop exits when the display connection is lost; the window is gone with it.
             if let PumpStatus::Exit(_) = status {
                 app.events.push(WindowEvent::Close);

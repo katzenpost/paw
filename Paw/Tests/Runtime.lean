@@ -93,7 +93,7 @@ def begin : Runtime app × List (Output Msg) :=
   Paw.Runtime.start app (Rect.ofXYWH 0 0 (px 100) (px 100)) 0 Env.mock.measure
 
 def requests (outs : List (Output Msg)) : List Request :=
-  outs.filterMap fun | .request r => some r | .task _ => none
+  outs.filterMap fun | .request r => some r | _ => none
 
 def tasks (outs : List (Output Msg)) : Nat :=
   (outs.filter fun | .task _ => true | _ => false).length

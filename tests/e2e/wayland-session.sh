@@ -21,6 +21,7 @@ wait_for "$WORK/pointer.out" '^ready' || { fail "a virtual pointer"; finish; }
 start_gallery
 wait_for "$LAYOUT" '^inc ' || { fail "the gallery reported its layout"; finish; }
 sleep 1
+expect_idle "an idle gallery does not wake"
 # The window's top left on the output, from sway's tree.
 ORIGIN=$(swaymsg -t get_tree | jq -r '.. | objects | select(.name? == "Paw gallery") |
   "\(.rect.x + .window_rect.x) \(.rect.y + .window_rect.y)"' | head -n 1)

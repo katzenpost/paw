@@ -32,7 +32,9 @@ def sample : List WindowEvent := [
   .input { kind := .leaveWindow, time := 10, synthetic := true, obscured := true },
   .resize 64000 48000,
   .close,
-  .access ⟨7⟩ .focus]
+  .access ⟨7⟩ .focus,
+  .focus false,
+  .visible true]
 
 def echoes (r : Request) : Bool :=
   match requestEnc r with
@@ -43,7 +45,7 @@ def isPng (b : ByteArray) : Bool := b.size > 8 && b.data.toList.take 4 == [0x89,
 
 def tests : TestM Unit := do
   let decoded := (list eventCodec).decodeAll (ofBytes (Ffi.sampleEvents ()))
-  check "Lean decodes the events Rust encodes" (decoded.map (·.length) == some 13)
+  check "Lean decodes the events Rust encodes" (decoded.map (·.length) == some 15)
   check "and they are the events meant"
     (decoded.any fun ds => (ds.zip sample).all fun (a, b) => eventEnc a == eventEnc b)
   check "a set title request reaches Rust" (echoes (.setTitle (SafeName.filter "t")))

@@ -102,6 +102,8 @@ def eventEnc : WindowEvent → List UInt8
   | .resize w h => nat.enc 1 ++ int.enc w ++ int.enc h
   | .close => nat.enc 2
   | .access id a => nat.enc 3 ++ nat.enc id.n ++ accessActionCodec.enc a
+  | .focus b => nat.enc 4 ++ bool.enc b
+  | .visible b => nat.enc 5 ++ bool.enc b
 
 def eventDec (bs : List UInt8) : Option (WindowEvent × List UInt8) := do
   let (tag, bs) ← nat.dec bs
@@ -113,12 +115,14 @@ def eventDec (bs : List UInt8) : Option (WindowEvent × List UInt8) := do
     let (id, bs) ← nat.dec bs
     let (a, bs) ← accessActionCodec.dec bs
     pure (.access ⟨id⟩ a, bs)
+  | 4 => let (b, bs) ← bool.dec bs; pure (.focus b, bs)
+  | 5 => let (b, bs) ← bool.dec bs; pure (.visible b, bs)
   | _ => none
 
 theorem event_roundtrip (e : WindowEvent) (rest : List UInt8) :
     eventDec (eventEnc e ++ rest) = some (e, rest) := by
   cases e <;> simp [eventEnc, eventDec, List.append_assoc, nat.roundtrip, inputCodec.roundtrip,
-    int.roundtrip, accessActionCodec.roundtrip]
+    int.roundtrip, accessActionCodec.roundtrip, bool.roundtrip]
 
 def eventCodec : Codec WindowEvent := { enc := eventEnc, dec := eventDec, roundtrip := event_roundtrip }
 
@@ -157,7 +161,8 @@ def renderPng (s : Scene) (w h : Nat) (scale : Nat := 1000) : ByteArray :=
 /-- The window the Rust layer opened, as the runtime's platform. -/
 def platform : Platform where
   poll := fun ms => do
-    let b ← Ffi.windowPoll ms.toUInt32
+    -- The largest value means no timeout.
+    let b ← Ffi.windowPoll ((ms.map fun m => (min m 0xFFFFFFFE).toUInt32).getD 0xFFFFFFFF)
     return ((list eventCodec).decodeAll (ofBytes b)).getD [.close]
   now := Ffi.now
   size := do
@@ -177,7 +182,8 @@ def layoutReport {Msg : Type} (tree : Node Msg) : String :=
     s!"{k} {r.x0 / unitsPerPx} {r.y0 / unitsPerPx} {r.x1 / unitsPerPx} {r.y1 / unitsPerPx}"
 
 /-- Opens a window of `w` × `h` logical pixels and runs `app` in it until it quits or the window
-closes. Two hooks are for tests that drive the window from outside: if `PAW_TEST_LOG` names a
+closes. `PAW_REDUCE_MOTION=1` asks for reduced motion: animations jump to their end. Two hooks are
+for tests that drive the window from outside: if `PAW_TEST_LOG` names a
 file, `describe` of the model is appended to it after each step; if `PAW_TEST_LAYOUT` names one,
 it always holds `layoutReport` of the tree on screen. -/
 def run {caps : List Cap} (app : App caps) (title : String := "Paw") (w h : Nat := 800)
@@ -196,6 +202,7 @@ def run {caps : List Cap} (app : App caps) (title : String := "Paw") (w h : Nat 
         IO.FS.writeFile (path ++ ".tmp") report
         IO.FS.rename (path ++ ".tmp") path
         last.set report
-  Runtime.run app platform onStep
+  let motion := (← IO.getEnv "PAW_REDUCE_MOTION") != some "1"
+  Runtime.run app { platform with motion } onStep
 
 end Paw.Linux

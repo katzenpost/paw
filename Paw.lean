@@ -20,5 +20,6 @@ import Paw.Widgets.Basic
 import Paw.Widgets.TextField
 import Paw.Widgets.Scroll
 import Paw.Widgets.Overlay
+import Paw.Widgets.Anim
 import Paw.Ui
 import Paw.Linux

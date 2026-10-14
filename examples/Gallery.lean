@@ -9,7 +9,8 @@ import Paw
 
 Every widget Paw has, in one window: a counter, a form with a password, a checkbox, a list whose
 rows keep their state as it changes, a scrolled text, two effects that need the user's choice:
-opening a link and copying, and a menu in a popup that opens an alert and a confirmation. -/
+opening a link and copying, a menu in a popup that opens an alert and a confirmation, a tooltip,
+and rows that fade in. -/
 
 namespace Gallery
 
@@ -90,7 +91,7 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
 
 def view (m : Model) : Node Msg :=
   Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <| Ui.pad (px 8) <| Ui.col ([
-    Ui.row [Ui.button "−" .dec "dec", Ui.label s!"count: {m.count}" "count", Ui.button "+" .inc "inc",
+    Ui.row [Ui.button "−" .dec "dec", Ui.label s!"count: {m.count}" "count", Ui.tooltip "Adds one to the count" (Ui.button "+" .inc "inc"),
       Ui.spacer,
       Ui.popup m.menu (Ui.button "More" (.menu true) "more")
         (Ui.col [Ui.button "About" .about "about", Ui.button "Clear list" .askClear "clear"])
@@ -100,7 +101,7 @@ def view (m : Model) : Node Msg :=
     Ui.checkbox "I agree" m.agree .agree "agree",
     Ui.row [Ui.textField m.draft .draft { placeholder := SafeText.trusted "new item" } "draft",
       Ui.button "Add" .add "add", Ui.button "Reverse" .reverse "reverse"],
-    Ui.list m.items (·.1) fun (id, s) =>
+    Ui.list m.items (·.1) fun (id, s) => Ui.fadeIn <|
       Ui.row [Ui.text (SafeText.filter s), Ui.spacer, Ui.button "Remove" (.remove id) s!"remove-{id}"],
     Ui.height (px 120) <| Ui.scroll (Ui.paragraph (String.intercalate "\n" ((List.range 12).map fun i =>
       s!"Line {i + 1} of a text longer than its box."))) "scroll",

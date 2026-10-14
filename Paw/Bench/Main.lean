@@ -211,7 +211,27 @@ def overlayBenches : IO (Array LeanBench.Bench) := do
     { name := "overlay render overlays 1000", config := cfg "overlay"
       action := do
         let (r, t) := (← rt.get, ← t.get)
-        scene.set (Node.renderOverlays env win (r.shown.toList.filterMap fun (_, p) => t.get? p)) }]
+        scene.set (Node.renderOverlays env win (r.shown.toList.filterMap fun (_, p, _) => t.get? p)) }]
+
+/-- The list, fading in over a second. -/
+def fadingApp : App [] := { app with view := fun m => Ui.fadeIn (view m) 1000 }
+
+/-- Sixty frames of the fade, 16 ms apart, as `Runtime.advance` steps. -/
+def frames (rt : Runtime fadingApp) : Runtime fadingApp := Id.run do
+  let mut rt := rt
+  for i in [1:61] do
+    rt := (rt.advance (16 * i)).1
+  return rt
+
+def timeBenches : IO (Array LeanBench.Bench) := do
+  let idle ← IO.mkRef (runtime 1000)
+  let deadline ← IO.mkRef (none : Option Nat)
+  let fading ← IO.mkRef (let rt := (Paw.Runtime.start fadingApp (Rect.ofXYWH 0 0 (px 800) (px 600)) 0 measure).1
+    { rt with model := model 1000 }.rebuild.1)
+  let out ← IO.mkRef (Paw.Runtime.start fadingApp (Rect.ofXYWH 0 0 (px 800) (px 600)) 0 measure).1
+  return #[
+    mkBench "time next deadline, idle, 1000 rows" "time" idle deadline (·.nextDeadline),
+    mkBench "time 60 frames of a fade, 1000 rows" "time" fading out frames (samples := 10)]
 
 def runtimeBenches : IO (Array LeanBench.Bench) := do
   let r10 ← IO.mkRef (runtime 10)
@@ -239,7 +259,7 @@ end Paw.Bench
 
 open Paw.Bench in
 def main (args : List String) : IO UInt32 := do
-  for suite in [textBenches, codecBenches, layoutBenches, treeBenches, routeBenches, overlayBenches, runtimeBenches,
+  for suite in [textBenches, codecBenches, layoutBenches, treeBenches, routeBenches, overlayBenches, timeBenches, runtimeBenches,
       platformBenches] do
     (← suite).forM LeanBench.register
   LeanBench.runMain args

@@ -32,6 +32,19 @@ center() {
   awk -v k="$1" '$1 == k { printf "%d %d\n", ($2 + $4) / 2, ($3 + $5) / 2 }' "$LAYOUT"
 }
 
+# The gallery's CPU time so far, in clock ticks.
+cpu_ticks() {
+  awk '{ print $14 + $15 }' "/proc/$GALLERY_PID/stat"
+}
+
+# Checks that the gallery, left alone, uses no CPU: its loop sleeps until there is an event.
+expect_idle() {
+  t0=$(cpu_ticks)
+  sleep 2
+  t1=$(cpu_ticks)
+  if [ $((t1 - t0)) -le 2 ]; then ok "$1"; else fail "$1 ($((t1 - t0)) ticks in 2 s)"; fi
+}
+
 ok() { echo "ok   $1"; }
 fail() { echo "FAIL $1"; FAILED=1; }
 

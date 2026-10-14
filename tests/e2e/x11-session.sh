@@ -14,6 +14,7 @@ xdotool windowfocus --sync "$W"
 wait_for "$LAYOUT" '^inc ' || { fail "the gallery reported its layout"; exit 1; }
 # Widgets must have been still for the router's 500 ms before a click designates them.
 sleep 1
+expect_idle "an idle gallery does not wake"
 
 click() {
   set -- $(center "$1")

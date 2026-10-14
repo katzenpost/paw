@@ -181,6 +181,19 @@ theorem append_within {a b : Scene} {v : Rect} (ha : a.Within v) (hb : b.Within 
 theorem Within.mono {s : Scene} {v w : Rect} (h : s.Within v) (hw : v.Within w) : s.Within w :=
   fun i hi => (h i hi).trans hw
 
+/-- `c` with its alpha scaled by `a`/255. -/
+def _root_.Paw.Color.scaleAlpha (c : Color) (a : Nat) : Color :=
+  { c with a := (c.a.toNat * min a 255 / 255).toUInt8 }
+
+/-- The item drawn with its colors' alpha scaled by `a`/255. -/
+def Draw.withAlpha (a : Nat) : Draw → Draw
+  | .fill r c radius => .fill r (c.scaleAlpha a) radius
+  | .stroke r c w radius => .stroke r (c.scaleAlpha a) w radius
+  | .text p t s => .text p t { s with color := s.color.scaleAlpha a }
+
+/-- The scene drawn `a`/255 opaque, as a fade draws it. -/
+def withAlpha (a : Nat) (s : Scene) : Scene := ⟨s.items.map fun (r, d) => (r, Draw.withAlpha a d)⟩
+
 def Draw.translate (p : Point) : Draw → Draw
   | .fill r c radius => .fill (r.translate p) c radius
   | .stroke r c w radius => .stroke (r.translate p) c w radius

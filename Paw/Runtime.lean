@@ -11,7 +11,9 @@ import Paw.Cmd
 what to do: draw a scene, set the title, write the clipboard, open a link, run a task. It is pure,
 so tests drive it directly. `Runtime.run` is the loop around it: it polls the platform, steps, and
 carries out what each step asks, running tasks on their own threads and stepping their results in
-as messages of origin `other`.
+as messages of origin `other`. Between events it sleeps in the platform's poll until
+`nextDeadline`, when `advance` gives widgets their ticks and `update` its delayed messages; with
+nothing waiting, it sleeps until there is an event.
 
 A step for input routes it, gives each delivery to its widget (and to the widget's ancestors in
 turn, if it does not handle it), and runs `update` on the messages that come out. A widget's
@@ -42,6 +44,10 @@ inductive WindowEvent where
   /-- The window's new size, in units. -/
   | resize (w h : Int)
   | close
+  /-- The window gained or lost keyboard focus. -/
+  | focus (has : Bool)
+  /-- The window can or cannot be seen: shown or minimized, or covered whole. -/
+  | visible (seen : Bool)
   deriving Repr, Inhabited
 
 /-- What the platform is asked to do. -/
@@ -60,6 +66,8 @@ inductive Request where
 inductive Output (Msg : Type) where
   | request (r : Request)
   | task (io : IO Msg)
+  /-- `m` to `update` in `ms` milliseconds. The runtime keeps these itself. -/
+  | after (ms : Nat) (m : Msg)
 
 def Cmd.toOutput {Msg : Type} {caps : List Cap} {o : Origin} : Cmd Msg caps o → Output Msg
   | .effect _ (.setClipboard _ t) _ _ => .request (.setClipboard t)
@@ -68,6 +76,7 @@ def Cmd.toOutput {Msg : Type} {caps : List Cap} {o : Origin} : Cmd Msg caps o �
   | .notify t b _ => .request (.notify t b)
   | .setTitle t => .request (.setTitle t)
   | .quit => .request .quit
+  | .after ms m => .after ms m
 
 structure Runtime {caps : List Cap} (app : App caps) where
   model : app.Model
@@ -82,6 +91,12 @@ structure Runtime {caps : List Cap} (app : App caps) where
   quit : Bool := false
   /-- `update` has run since the last settle, so the model may have changed. -/
   updated : Bool := false
+  windowFocused : Bool := true
+  windowVisible : Bool := true
+  /-- Animations run; false when the user asked for reduced motion. -/
+  motion : Bool := true
+  /-- Messages from `Cmd.after`, with when each is due. -/
+  delayed : Array (Nat × app.Msg) := #[]
 
 namespace Runtime
 
@@ -89,16 +104,23 @@ variable {caps : List Cap} {app : App caps}
 
 def env (rt : Runtime app) : Env :=
   { measure := rt.measure, now := rt.now, theme := rt.theme, focused := rt.router.focused,
-    hovered := rt.router.hovered, pressed := rt.router.pressed, window := rt.window }
+    hovered := rt.router.hovered, pressed := rt.router.pressed, window := rt.window,
+    windowFocused := rt.windowFocused, motion := rt.motion }
 
 /-- The tree placed in the window, and the router told where everything is. -/
 def layout (rt : Runtime app) : Runtime app :=
   let tree := rt.tree.resize rt.env rt.window
-  { rt with tree, router := rt.router.observe tree rt.now }
+  { rt with tree, router := rt.router.observe tree rt.now rt.env }
 
-/-- What the open overlays the router lets be seen draw, bottom first. -/
+/-- The overlays to draw now, bottom first, with their paths: those the router lets be seen, and of
+tooltips, those showing. -/
+def visibleOverlays (rt : Runtime app) : List (WidgetId × List Nat) :=
+  rt.router.shown.toList.filterMap fun (id, p, k) =>
+    if k != .tip || rt.router.tipShown p rt.now then some (id, p) else none
+
+/-- What the overlays to draw now draw, bottom first. -/
 def overlayScene (rt : Runtime app) : Scene :=
-  Node.renderOverlays rt.env rt.window (rt.router.shown.toList.filterMap fun (_, p) => rt.tree.get? p)
+  Node.renderOverlays rt.env rt.window (rt.visibleOverlays.filterMap fun (_, p) => rt.tree.get? p)
 
 /-- The window's background, then the tree, then its open overlays. -/
 def present (rt : Runtime app) : Output app.Msg :=
@@ -107,7 +129,10 @@ def present (rt : Runtime app) : Output app.Msg :=
 
 /-- The tree as assistive technology sees it. -/
 def accessOut (rt : Runtime app) : Output app.Msg :=
-  .request (.access ((rt.router.focused.map (·.n)).getD 0) (rt.tree.accessTree rt.env rt.router.refused.contains))
+  let hidden := rt.router.shown.toList.filterMap fun (id, p, k) =>
+    if k == .tip && !rt.router.tipShown p rt.now then some id else none
+  .request (.access ((rt.router.focused.map (·.n)).getD 0)
+    (rt.tree.accessTree rt.env fun id => rt.router.refused.contains id || hidden.contains id))
 
 /-- A new frame: the scene, and the tree for assistive technology if it may have changed. That
 tree does not depend on hover or press, so a frame for those alone leaves it out. -/
@@ -119,7 +144,9 @@ def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List
   let ((), (model, cmds)) := (app.update o m).run (rt.model, #[])
   let outs := cmds.toList.map Cmd.toOutput
   let quit := rt.quit || outs.any fun | .request .quit => true | _ => false
-  ({ rt with model, updated := true, quit }, outs)
+  let delayed := rt.delayed ++ (outs.filterMap fun | .after ms m => some (rt.now + ms, m) | _ => none).toArray
+  let outs := outs.filter fun | .after .. => false | _ => true
+  ({ rt with model, updated := true, quit, delayed }, outs)
 
 /-- What a widget's request comes to, while handling a delivery with origin `o`. -/
 def applyReq (rt : Runtime app) (o : Origin) : Req app.Msg → Runtime app × List (Output app.Msg)
@@ -186,25 +213,36 @@ def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List
 
 /-- The runtime for `app` in a window of `window`, at `now`, and its first scene. -/
 def start (app : App caps) (window : Rect) (now : Nat)
-    (measure : TextStyle → SafeText → Int × Int) : Runtime app × List (Output app.Msg) :=
+    (measure : TextStyle → SafeText → Int × Int) (motion : Bool := true) : Runtime app × List (Output app.Msg) :=
   let (tree, nextId) := ((app.view app.init).resolve none).init 1
-  let rt : Runtime app := { model := app.init, tree, nextId, router := {}, window, now, measure }
+  let rt : Runtime app := { model := app.init, tree, nextId, router := {}, window, now, measure, motion }
   let rt := rt.layout
   (rt, rt.frame)
+
+/-- Input from the platform: routed, delivered, and settled. -/
+def stepInput (rt : Runtime app) (i : Input) : Runtime app × List (Output app.Msg) :=
+  let before := rt.model
+  let (router, ds) := rt.router.route rt.tree i
+  let focusMoved := router.focused != rt.router.focused
+  let moved := focusMoved || router.hovered != rt.router.hovered || router.pressed != rt.router.pressed
+  let (rt, outs, handled) := ds.foldl
+    (fun (rt, outs, h) d => let (rt, o, h') := rt.deliver d; (rt, outs ++ o, h || h'))
+    ({ rt with router }, [], false)
+  rt.settle before (moved || handled) outs (access := focusMoved || handled)
 
 /-- One event from the window. -/
 def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List (Output app.Msg) :=
   let rt := { rt with now, router := { rt.router with consent := none } }
   match ev with
   | .input i =>
-    let before := rt.model
-    let (router, ds) := rt.router.route rt.tree i
-    let focusMoved := router.focused != rt.router.focused
-    let moved := focusMoved || router.hovered != rt.router.hovered || router.pressed != rt.router.pressed
-    let (rt, outs, handled) := ds.foldl
-      (fun (rt, outs, h) d => let (rt, o, h') := rt.deliver d; (rt, outs ++ o, h || h'))
-      ({ rt with router }, [], false)
-    rt.settle before (moved || handled) outs (access := focusMoved || handled)
+    -- Whatever the platform sends, keys reach no widget while the window lacks keyboard focus.
+    if i.kind.keyboard && !rt.windowFocused then (rt, []) else rt.stepInput i
+  | .focus has =>
+    let rt := { rt with windowFocused := has }.layout
+    (rt, rt.frame)
+  | .visible seen =>
+    let rt := { rt with windowVisible := seen }.layout
+    (rt, if seen then rt.frame else [])
   | .resize w h =>
     let rt := { rt with window := Rect.ofXYWH rt.window.x0 rt.window.y0 w h }.layout
     (rt, rt.frame)
@@ -228,6 +266,44 @@ def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List
     | none, _ => (rt, [])
   | .close => ({ rt with quit := true }, [])
 
+/-- Time passing, at `now`: widgets due a tick get one, while the window can be seen; messages from
+`Cmd.after` that are due go to `update` with origin `other`; and a frame is drawn if anything
+changed, or a tooltip came or went. -/
+def advance (rt : Runtime app) (now : Nat) : Runtime app × List (Output app.Msg) :=
+  let tipsBefore := rt.visibleOverlays
+  let rt := { rt with now, router := { rt.router with consent := none } }
+  let before := rt.model
+  let due := if rt.windowVisible then
+      rt.router.ticks.fold (fun acc id (ms, d) => if d ≤ now then (id, ms) :: acc else acc) []
+    else []
+  let (rt, outs, ticked) := due.foldl (fun (rt, outs, ticked) (id, ms) =>
+    let router := { rt.router with ticks := rt.router.ticks.insert id (ms, now + ms) }
+    let rt := { rt with router }
+    match rt.router.paths[id]?.bind (rt.tree.handleIn rt.env (.tick now) ·) with
+    | some (tree, reqs) =>
+      let (rt, o) := { rt with tree }.applyReqs .other reqs
+      (rt, outs ++ o, true)
+    | none => (rt, outs, ticked)) (rt, [], false)
+  let (ready, later) := rt.delayed.partition (·.1 ≤ now)
+  let (rt, outs) := ready.foldl (fun (rt, outs) (_, m) => let (rt, o) := rt.applyMsg .other m; (rt, outs ++ o))
+    ({ rt with delayed := later }, outs)
+  rt.settle before (ticked || rt.visibleOverlays != tipsBefore) outs (access := !ready.isEmpty)
+
+/-- When `advance` next has something to do: the earliest tick due while the window can be seen,
+message from `Cmd.after`, or tooltip waiting to show; `none` if nothing is waiting, and the loop
+may sleep until the platform has an event. -/
+def nextDeadline (rt : Runtime app) : Option Nat :=
+  let ticks := if rt.windowVisible then rt.router.ticks.fold (fun acc _ (_, d) => d :: acc) [] else []
+  ((ticks ++ rt.delayed.toList.map (·.1) ++ rt.router.tipDeadlines rt.now).map (max rt.now)).min?
+
+/-- The deadline is never in the past, so the loop never waits a negative time. -/
+theorem now_le_nextDeadline {rt : Runtime app} {d : Nat} (h : rt.nextDeadline = some d) : rt.now ≤ d := by
+  unfold nextDeadline at h
+  have hm := List.min?_mem h
+  simp only [List.mem_map] at hm
+  obtain ⟨x, -, rfl⟩ := hm
+  omega
+
 /-- A task's result, as a message of origin `other`. -/
 def taskResult (rt : Runtime app) (m : app.Msg) (now : Nat) : Runtime app × List (Output app.Msg) :=
   let before := rt.model
@@ -238,14 +314,17 @@ end Runtime
 
 /-- The platform as the runtime uses it: the Rust layer, or a fake in tests. -/
 structure Platform where
-  /-- Events from the window, waiting up to the given milliseconds for the first. -/
-  poll : Nat → IO (List WindowEvent)
+  /-- Events from the window, waiting up to the given milliseconds for the first, or with `none`,
+  until there is one. -/
+  poll : Option Nat → IO (List WindowEvent)
   /-- Milliseconds since the app started. -/
   now : IO Nat
   /-- The window's size, in units. -/
   size : IO (Int × Int)
   measure : TextStyle → SafeText → Int × Int
   perform : Request → IO Unit
+  /-- Animations run; false when the user asked for reduced motion. -/
+  motion : Bool := true
 
 namespace Runtime
 
@@ -259,14 +338,22 @@ def carryOut (p : Platform) (outs : List (Output app.Msg)) :
     match o with
     | .request r => p.perform r
     | .task io => tasks := tasks.push (← IO.asTask io)
+    | .after .. => pure ()
   return tasks
 
+/-- How long the loop may wait for the platform: until the next deadline, and while tasks are
+running, no more than 16 ms, since a task finishing does not wake the platform; with nothing
+waiting, until the platform has an event. -/
+def waitFor (rt : Runtime app) (now : Nat) (tasksRunning : Bool) : Option Nat :=
+  let untilDue := rt.nextDeadline.map (· - now)
+  if tasksRunning then some ((untilDue.map (min 16)).getD 16) else untilDue
+
 /-- Runs `app` on `p` until it quits or the window closes, calling `onStep` with the runtime after
-each poll. -/
+each poll. The loop sleeps in the platform's poll until an event or the next deadline. -/
 partial def run (app : App caps) (p : Platform) (onStep : Runtime app → IO Unit := fun _ => pure ()) :
     IO Unit := do
   let (w, h) ← p.size
-  let (rt, outs) := start app (Rect.ofXYWH 0 0 w h) (← p.now) p.measure
+  let (rt, outs) := start app (Rect.ofXYWH 0 0 w h) (← p.now) p.measure p.motion
   loop rt (← carryOut p outs)
 where
   loop (rt : Runtime app) (tasks : Array (Task (Except IO.Error app.Msg))) : IO Unit := do
@@ -274,10 +361,13 @@ where
     if rt.quit then return
     let mut rt := rt
     let mut tasks := tasks
-    for ev in ← p.poll 16 do
+    for ev in ← p.poll (rt.waitFor (← p.now) !tasks.isEmpty) do
       let (rt', outs) := rt.step ev (← p.now)
       rt := rt'
       tasks := tasks ++ (← carryOut p outs)
+    let (rt', outs) := rt.advance (← p.now)
+    rt := rt'
+    tasks := tasks ++ (← carryOut p outs)
     let mut pending := #[]
     for t in tasks do
       if ← IO.hasFinished t then

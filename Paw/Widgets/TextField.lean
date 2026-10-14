@@ -93,7 +93,17 @@ def cleanInput (s : String) : List Char :=
 structure TextFieldState where
   cursor : Nat := 0
   anchor : Option Nat := none
+  /-- When the caret last moved or focus arrived: it shows from then, blinking. -/
+  since : Nat := 0
   deriving TypeName, Repr, Inhabited
+
+/-- How long the caret shows, then hides, while it blinks. -/
+def blinkMs : Nat := 500
+
+/-- The caret shows at `now`: the field and the window have focus, and the caret is in the shown
+half of its blink, counted from `since`. -/
+def caretShown (env : Env) (since : Nat) : Bool :=
+  env.isFocused && env.windowFocused && ((env.now - since) / blinkMs) % 2 == 0
 
 structure TextFieldCfg where
   maxLength : Nat := 10000
@@ -116,13 +126,14 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
     Widget Msg :=
   let chars := value.toList
   let edit (st : TextFieldState) : Edit := Edit.clamp { value := chars, cursor := st.cursor, anchor := st.anchor }
-  let result (e : Edit) (extra : List (Req Msg) := []) : Option (TextFieldState × List (Req Msg)) :=
+  let result (now : Nat) (e : Edit) (extra : List (Req Msg) := []) : Option (TextFieldState × List (Req Msg)) :=
     let changed := if e.value == chars then [] else [Req.emit (onChange (String.ofList e.value))]
-    some ({ cursor := e.cursor, anchor := e.anchor }, extra ++ changed)
+    some ({ cursor := e.cursor, anchor := e.anchor, since := now }, extra ++ changed)
   Widget.Spec.build (σ := TextFieldState) {
     kind := "textField"
     init := { cursor := chars.length }
-    merge := fun st => { cursor := min st.cursor chars.length, anchor := st.anchor.map (min · chars.length) }
+    merge := fun st =>
+      { st with cursor := min st.cursor chars.length, anchor := st.anchor.map (min · chars.length) }
     sizeReq := fun env _ =>
       let (_, h) := env.measure (textStyle env) (SafeText.trusted "M")
       (SizeReq.minSize (px 120).toNat, SizeReq.fixedSize (h + 2 * padY).toNat)
@@ -142,13 +153,14 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
         | some (lo, hi) => [Draw.fill (Rect.ofXYWH (x0 + width lo) (v.y0 + padY) (width hi - width lo)
             (v.height - 2 * padY)) (Color.rgba t.accent.r t.accent.g t.accent.b 80) 0]
         | none => []
-      let caret := if env.isFocused then
+      let caret := if caretShown env st.since then
           [Draw.fill (Rect.ofXYWH (x0 + caretX) (v.y0 + padY) (px 1) (v.height - 2 * padY)) t.text 0]
         else []
       Scene.inBox v ([.fill v t.surface (px 3), .stroke v border bw (px 3)] ++ sel ++ shown ++ caret)
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun env st v ev =>
       let e := edit st
+      let result (e : Edit) (extra : List (Req Msg) := []) := result env.now e extra
       match ev with
       | .text s | .paste s => result (e.insert (cleanInput s) cfg.maxLength)
       | .key .backspace _ true => result e.backspace
@@ -166,9 +178,11 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
       | .press p .primary =>
         let measure (t : SafeText) := (env.measure (textStyle env) t).1
         result (e.moveTo (indexAt measure chars (p.x - v.x0 - padX)) false)
-      | .focus | .blur | .enter _ | .leave _ => some (st, [])
+      | .focus => some ({ st with since := env.now }, [])
+      | .tick _ | .blur | .enter _ | .leave _ => some (st, [])
       | _ => none
     focusable := true
+    every := fun env _ => if env.isFocused && env.windowFocused then some blinkMs else none
     access := fun _ _ =>
       some { role := .textInput, name := cfg.placeholder, value := some (SafeText.filter value) } }
 

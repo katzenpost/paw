@@ -8,6 +8,7 @@ import Paw.Widgets.Basic
 import Paw.Widgets.TextField
 import Paw.Widgets.Scroll
 import Paw.Widgets.Overlay
+import Paw.Widgets.Anim
 
 /-! # Building views
 
@@ -95,6 +96,20 @@ def popup (isOpen : Bool) (anchor content : Node Msg) (onDismiss : Msg) (key : O
     Node Msg :=
   let pop := Node.containerWith (popupWidget onDismiss) (padLayout (px 4)) [content]
   Node.container (box { expand := true }) (anchor :: if isOpen then [pop.overlay .popup] else []) key
+
+/-- `child` with `tip` shown below it once the pointer has rested on it for a second, or while
+focus is in it. The tip takes no input. -/
+def tooltip (tip : String) (child : Node Msg) : Node Msg :=
+  let t := Node.containerWith tipPanel (padLayout (px 4)) [paragraph tip]
+  Node.container (box { expand := true }) [child, t.overlay .tip]
+
+/-- `child` faded in over `ms` when it appears. -/
+def fadeIn (child : Node Msg) (ms : Nat := 250) : Node Msg :=
+  Node.containerWith (Widgets.fadeIn ms) (box { expand := true }) [child]
+
+/-- `child` slid in from `offset` over `ms` when it appears. -/
+def slideIn (child : Node Msg) (offset : Point := ⟨0, px 16⟩) (ms : Nat := 250) : Node Msg :=
+  Node.containerWith (Widgets.slideIn offset ms) (box { expand := true }) [child]
 
 /-- `content` in a dialog named `title`, over the whole window, which it dims. It takes no room
 where it is placed in the view. Nothing beneath it can be reached until it closes; Escape and Enter

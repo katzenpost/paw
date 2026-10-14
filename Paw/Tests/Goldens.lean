@@ -44,8 +44,17 @@ def click (rt : Runtime GApp) (k : String) (t : Nat) : Runtime GApp :=
   let p := at_ rt k
   step (step rt (.press p .primary) t) (.release p .primary) (t + 50)
 
+/-- The gallery with reduced motion, so that what it draws does not depend on when. -/
 def gallery : Runtime GApp :=
-  (Paw.Runtime.start GApp (Rect.ofXYWH 0 0 (px 640) (px 560)) 0 Linux.measure).1
+  (Paw.Runtime.start GApp (Rect.ofXYWH 0 0 (px 640) (px 560)) 0 Linux.measure (motion := false)).1
+
+/-- The gallery's rows half way through fading in. -/
+def galleryFading : Runtime GApp :=
+  let rt := (Paw.Runtime.start GApp (Rect.ofXYWH 0 0 (px 640) (px 560)) 0 Linux.measure).1
+  ((rt.advance 16).1.advance 141).1
+
+/-- The gallery with the pointer resting on + for a second, showing its tooltip. -/
+def galleryTip : Runtime GApp := (step gallery (.move (at_ gallery "inc")) 1000).advance 2000 |>.1
 
 /-- The gallery after a session: a name, a password, the box checked, an item added, the scroll
 moved, and the name selected in its focused field. -/
@@ -98,6 +107,8 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
   ("gallery-hidpi", sceneOf gallery, 1280, 1120, 2000),
   ("popup-open", sceneOf galleryMenu, 640, 560, 1000),
   ("confirm", sceneOf galleryConfirm, 640, 560, 1000),
+  ("tooltip", sceneOf galleryTip, 640, 560, 1000),
+  ("gallery-fading", sceneOf galleryFading, 640, 560, 1000),
   ("button", draw oneButton 140 50, 140, 50, 1000),
   ("button-hovered", draw oneButton 140 50 { env with hovered := some buttonId }, 140, 50, 1000),
   ("button-pressed", draw oneButton 140 50 { env with hovered := some buttonId, pressed := some buttonId },

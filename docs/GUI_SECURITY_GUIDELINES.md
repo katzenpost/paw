@@ -114,7 +114,7 @@ Do not tell users something is final, delivered or secured when the system does 
 
 ## Input
 
-**Stable targets.** A control activated by a click or tap must have been visible, enabled and unmoved for a short time before the click, around 500 ms. Otherwise content that arrives and shifts the layout turns a click meant for one control into a click on another. Layout changes caused by content arriving never move a control under a pointer that is already pressed.
+**Stable targets.** A control activated by a click or tap must have been visible, enabled and unmoved for a short time before the click, around 500 ms. Otherwise content that arrives and shifts the layout turns a click meant for one control into a click on another. Layout changes caused by content arriving never move a control under a pointer that is already pressed. An animation is movement too: a control that is fading in, and so is still faint, or sliding into place, counts as moving until it has been still for the same delay.
 
 **Focus is the user's.** A dialog that opens while the user is typing receives their next keystrokes.
 

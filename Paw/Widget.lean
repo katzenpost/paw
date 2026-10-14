@@ -52,6 +52,10 @@ structure Env where
   content : Rect := default
   /-- The window, which overlays are placed within. -/
   window : Rect := default
+  /-- The window has keyboard focus. -/
+  windowFocused : Bool := true
+  /-- Animations run; false when the user asked for reduced motion, and they jump to their end. -/
+  motion : Bool := true
 
 /-- Text measured as monomer's tests measure it: 10 pixels a character, 20 pixels a line. -/
 def Env.mock : Env := { measure := fun _ t => (px (t.text.length * 10), px 20) }
@@ -131,6 +135,16 @@ structure Widget (Msg : Type) where
   dispose : Dynamic → List (Req Msg)
   /-- How it describes itself to assistive technology, if at all. -/
   access : Env → Dynamic → Option Access
+  /-- While this is `some ms`, the widget gets `Event.tick` every `ms` milliseconds, while the
+  window can be seen. A function of its state, as Elm's subscriptions are of the model: a widget
+  that leaves the tree or changes its state stops ticking, with nothing to undo. -/
+  every : Env → Dynamic → Option Nat
+  /-- The widget and what is in it are moving, as in an animation: the router counts them as moved
+  on every layout, so nothing in them can be designated until they have been still for `stableMs`. -/
+  moving : Env → Dynamic → Bool
+  /-- How a container changes its children's drawing, before the tree clips it to the box: a
+  fade lowers its alpha. -/
+  mapChildren : Env → Dynamic → Scene → Scene
 
 /-- A widget over its own state type `σ`. -/
 structure Widget.Spec (Msg σ : Type) where
@@ -145,6 +159,9 @@ structure Widget.Spec (Msg σ : Type) where
   focusable : Bool := false
   dispose : σ → List (Req Msg) := fun _ => []
   access : Env → σ → Option Access := fun _ _ => none
+  every : Env → σ → Option Nat := fun _ _ => none
+  moving : Env → σ → Bool := fun _ _ => false
+  mapChildren : Env → σ → Scene → Scene := fun _ _ s => s
 
 namespace Widget.Spec
 
@@ -166,6 +183,9 @@ def build (s : Widget.Spec Msg σ) : Widget Msg where
   focusable := s.focusable
   dispose := fun d => s.dispose (s.state d)
   access := fun env d => s.access env (s.state d)
+  every := fun env d => s.every env (s.state d)
+  moving := fun env d => s.moving env (s.state d)
+  mapChildren := fun env d => s.mapChildren env (s.state d)
 
 end Widget.Spec
 
@@ -183,6 +203,9 @@ def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β whe
   focusable := w.focusable
   dispose := fun st => (w.dispose st).map (Req.map f)
   access := w.access
+  every := w.every
+  moving := w.moving
+  mapChildren := w.mapChildren
 
 /-- A widget that only holds children: it draws nothing and asks for nothing itself. -/
 def Widget.container {Msg : Type} (kind : String) : Widget Msg :=

@@ -55,6 +55,7 @@ Some platform facts the guidelines rely on, as they stand on Linux:
 - **Synthetic input on Wayland.** A client cannot send input to another client's window. Input that a compositor's virtual-keyboard or virtual-pointer protocol injects, as the end-to-end tests do, arrives as the compositor's own, which only programs the compositor trusts can use.
 - **Keys held when focus arrives.** winit reports keys held while the window gains focus as synthetic key events. The Rust layer drops them, because they were not pressed in this window.
 - **A lost display.** When the compositor or X server goes away, winit's loop exits, and the Rust layer reports `close`.
+- **Focus and visibility.** winit's `Focused` and `Occluded` become `WindowEvent.focus` and `WindowEvent.visible`. Not every compositor reports occlusion; where none does, the window counts as seen.
 
 The byte formats are built from `Codec α`, a structure that carries its own law, the same pattern as the widget laws below:
 
@@ -106,6 +107,7 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | A scroll places its child past its own box | The child is laid out in a content rectangle the scroll names, and drawn clipped to the scroll's box | `assign_within` holds relative to the content rectangle; the clip law is unchanged |
 | Shrinking flexible sizes in one pass, clamped at zero, so a child weighted to give up more than it has leaves the rest overflowing | Shrinking in rounds: what one child cannot give, the others give next round | Children fit whenever their rigid sizes do; a random test checks it |
 | A widget opens an overlay with the `SetOverlay` request and closes it with `ResetOverlay` | An overlay is a node of the view, marked with `Node.overlay`; it is open while the view has it | One direction for data to flow: the model says what is open |
+| `RenderEvery` and `RenderStop` requests start and stop a widget's timer, and while any runs, the loop draws 60 frames a second | A widget declares `every`, how often it wants `Event.tick`, as a function of its state; the loop sleeps until the next tick is due | A widget that leaves the tree or changes state stops ticking with nothing to undo; an idle app uses no CPU |
 | `alert` and `confirm` can be opened by any message, and their accept button acts on any click | A modal opens only with a `Modal` token made from the designation of the input being handled; `confirm`'s accept button acts only on a designated click | Dialogs come only from the user's actions, and ignore input until they are stable (guidelines, Input) |
 
 ## Laws in types
@@ -220,6 +222,7 @@ The full `Widget` record also has monomer's merge, event and dispose functions. 
 | `Router` | `nextFocus_mem`: focus moves only to a widget in the focus order, which holds only visible, enabled, focusable widgets | Focus is the user's |
 | `Router` | `overlay_hit`: while an overlay is open, the pointer reaches only widgets in it; `press_outside`: a press outside it reaches nothing else | The user clicks what they see; a popup cannot steer a click to what it covers |
 | `Node` | `overlays_within`: overlays draw within the window; `Overlay.place_within` | Content cannot set its own position |
+| `Runtime` | `now_le_nextDeadline`: the loop never waits for a deadline already past | Timers fire when due |
 | `Node` | keys unique among siblings, by `dedupKeys_nodup` | State is never handed to another widget |
 
 Widgets draw with `Scene.inBox v ds`, every item clipped to the box `v`, and `Scene.inBox_within` is their `render_within`.
@@ -408,6 +411,20 @@ One step for input, as in monomer's `mainLoop`:
 `Runtime.run` is the IO loop around `step`, over a `Platform`, a structure of IO functions: poll events, the time, the window size, measure text, perform a request. The Rust layer provides one, and tests a scripted fake. Tasks run with `IO.asTask`; their results are stepped in with origin `other`.
 
 Nodes, trees and the runtime must be in `Type` for `IO` to hold them. So a widget keeps its state as a `Dynamic`. Widgets are still written over their own state type, as a `Widget.Spec Msg σ` whose `build` wraps each function, and `render_within` carries through the wrapping.
+
+## Time
+
+Widgets that change with time, such as a blinking caret or an animation, declare it: a widget's `every` gives how often it wants `Event.tick`, as a function of its state and the environment. This is Elm's rule for subscriptions, which are a function of the model. A text field ticks every 500 ms while it and the window have focus; an animation ticks each frame until it ends; a widget that leaves the tree, or whose state says it is done, stops ticking with nothing to undo. Monomer's `RenderEvery` and `RenderStop` requests need a widget to start and stop its own timer, and a widget in Paw cannot start anything when it appears, because it gets no event then.
+
+The router keeps the schedule as it indexes the tree after each layout: a widget that still ticks as often keeps its next tick, a new one is due a period later. `Runtime.advance` is the step for time passing. It gives each widget whose tick is due an `Event.tick`, to that widget alone, and hands messages from `Cmd.after` that are due to `update`, with origin `other`, so a timer carries no authority whatever started it.
+
+The loop sleeps in the platform's poll until an event or `Runtime.nextDeadline`, the earliest tick, delayed message or tooltip due. With nothing waiting it sleeps with no timeout, so an idle app uses no CPU; the end-to-end tests check this. Monomer instead draws 60 frames a second while anything is scheduled and polls otherwise. Two things wake Paw early: a task finishing does not wake the platform, so while tasks run the loop waits at most 16 ms; and while the window cannot be seen, widgets do not tick at all.
+
+**Animations.** `fadeIn` and `slideIn` wrap a child and bring it in over a time from their first tick. A slide moves the content rectangle, as a scroll does, so hit-testing follows what is drawn. A fade lowers the alpha of its children's drawing through `mapChildren`, which changes the scene before the tree clips it to the box, so the clipping law is unchanged. An animation is not trusted to be harmless: while it runs, its widget's `moving` is true, and the router counts everything in it as moved on every frame. A control that is still faint, or still sliding under the pointer, cannot be designated until it has been still for `stableMs`. With reduced motion (`PAW_REDUCE_MOTION=1`), every animation is at its end at once and never ticks.
+
+**Tooltips** are overlays of their own kind, `Overlay.tip`. One shows below its anchor once the pointer has rested there for a second, or at once while keyboard focus is in the anchor, so that keyboard users see it too. It takes no input: the router never makes it the overlay input goes to, and hit-testing never enters it. Whether it shows depends only on hover and time, which the runtime knows, so no widget has to add nodes to the view.
+
+**Window focus.** While the window lacks keyboard focus, the runtime drops key, text and paste input before routing, whatever the platform sends.
 
 ## Accessibility
 

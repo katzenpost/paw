@@ -41,6 +41,16 @@ def modalWidget {Msg : Type} (m : Modal) (onDismiss : Msg) : Widget Msg :=
       | .dismiss | .key .escape _ true | .key .enter _ true => some (st, [.emit onDismiss])
       | _ => none }
 
+/-- A tooltip's panel. -/
+def tipPanel {Msg : Type} : Widget Msg :=
+  Widget.Spec.build (σ := NoState) {
+    kind := "tip"
+    init := {}
+    sizeReq := fun _ _ => ({}, {})
+    render := fun env _ v =>
+      Scene.inBox v [.fill v env.theme.surface (px 3), .stroke v env.theme.border (px 1) (px 3)]
+    render_within := fun _ _ v => Scene.inBox_within v _ }
+
 /-- A dialog's panel, named `title` to assistive technology. -/
 def dialogPanel {Msg : Type} (title : SafeName) : Widget Msg :=
   Widget.Spec.build (σ := NoState) {

@@ -40,6 +40,9 @@ inductive Overlay where
   | popup
   /-- The whole window. -/
   | modal
+  /-- A tooltip: placed as a popup is, but takes no input, and is drawn only while the pointer has
+  rested on its parent for a while, or focus is in it. -/
+  | tip
   deriving Repr, DecidableEq, Inhabited
 
 /-- Where an overlay of kind `k` asking for `req` goes, for a parent placed at `anchor`: within the
@@ -47,8 +50,10 @@ window `win`, never in its parent's box. -/
 def Overlay.place (k : Overlay) (win anchor : Rect) (req : SizeReq × SizeReq) : Rect :=
   match k with
   | .modal => win
-  | .popup =>
-    let w : Int := max (req.1.fixed + req.1.flex : Nat) anchor.width
+  | .popup | .tip =>
+    let w : Int := (req.1.fixed + req.1.flex : Nat)
+    -- A popup, such as a menu, is at least as wide as what opened it.
+    let w := if k == .popup then max w anchor.width else w
     let h : Int := req.2.fixed + req.2.flex
     let y := if anchor.y1 + h > win.y1 && anchor.y0 - h ≥ win.y0 then anchor.y0 - h else anchor.y1
     let x := max win.x0 (min anchor.x0 (win.x1 - w))
@@ -57,9 +62,7 @@ def Overlay.place (k : Overlay) (win anchor : Rect) (req : SizeReq × SizeReq) :
 
 theorem Overlay.place_within (k : Overlay) (win anchor : Rect) (req : SizeReq × SizeReq) :
     (k.place win anchor req).Within win := by
-  cases k
-  · exact Rect.inter_within _ _
-  · exact Rect.within_refl win
+  cases k <;> first | exact Rect.within_refl win | exact Rect.inter_within _ _
 
 structure NodeInfo where
   id : WidgetId := ⟨0⟩
@@ -424,7 +427,8 @@ overlays, which `renderOverlays` draws. -/
 def renderIn (env : Env) (seen : Rect) : Node Msg → Scene
   | mk w st i _ cs =>
     if i.visible then
-      w.render (envAt env i) st i.viewport ++ (renderList env (i.viewport.inter seen) cs).clip i.viewport
+      w.render (envAt env i) st i.viewport ++
+        (w.mapChildren (envAt env i) st (renderList env (i.viewport.inter seen) cs)).clip i.viewport
     else Scene.empty
   | deferred .. => Scene.empty
 
@@ -551,6 +555,19 @@ def bubbleIn (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Ms
         | (none, false) => own cs
       | none => (none, false)
   | _, deferred .. => (none, false)
+
+/-- `e` to the node at `path` alone: the tree with its new state and its requests, or `none` if
+it did not handle it. -/
+def handleIn (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Msg × List (Req Msg))
+  | [], mk w st i l cs =>
+    (w.handle (envAt env i) st i.viewport e).map fun (st', reqs) =>
+      (mk w st' { i with measured := false } l cs, reqs)
+  | k :: rest, mk w st i l cs =>
+    match cs[k]? with
+    | some c => (handleIn env e rest c).map fun (c', reqs) =>
+        (mk w st { i with measured := false } l (cs.set k c'), reqs)
+    | none => none
+  | _, deferred .. => none
 
 /-- `e` to the node at `path`, bubbling up as `bubbleIn` does. -/
 def bubbleAt (env : Env) (e : Event) (path : List Nat) (n : Node Msg) :
@@ -708,37 +725,46 @@ def keyedPlacementsList : List (Node Msg) → List (String × Rect)
   | c :: cs => keyedPlacements c ++ keyedPlacementsList cs
 end
 
-/-- The nodes that can be seen: each one's id, box and path from the root, and the overlays among
-them with their paths, both in preorder. -/
+/-- The nodes that can be seen: each one's id, box, path from the root and whether it is in
+something moving; the overlays among them with their paths; and those that want ticks, with how
+often. All in preorder. -/
 structure Index (Msg : Type) where
-  nodes : Array (WidgetId × Rect × List Nat) := #[]
+  nodes : Array (WidgetId × Rect × List Nat × Bool) := #[]
   overlays : Array (Node Msg × List Nat) := #[]
+  tickers : Array (WidgetId × Nat) := #[]
 
 mutual
-/-- Every visible node's id, box and path from the root, added to `acc` in preorder. An overlay is
-clipped only by the window `win`. -/
-def indexInto (win clip : Rect) (path : Array Nat) (acc : Index Msg) : Node Msg → Index Msg
-  | n@(mk _ _ i _ cs) =>
+/-- Every visible node, added to `acc` in preorder. An overlay is clipped only by the window
+`win`. -/
+def indexInto (env : Env) (win clip : Rect) (path : Array Nat) (moving : Bool) (acc : Index Msg) :
+    Node Msg → Index Msg
+  | n@(mk w st i _ cs) =>
     let seen := i.viewport.inter clip
     if i.visible && !seen.isEmpty then
       let p := path.toList
-      let acc := { nodes := acc.nodes.push (i.id, i.viewport, p),
-                   overlays := if i.overlay.isSome then acc.overlays.push (n, p) else acc.overlays }
-      indexList win seen path 0 acc cs
+      let e := envAt env i
+      let moving := moving || w.moving e st
+      let acc := { nodes := acc.nodes.push (i.id, i.viewport, p, moving),
+                   overlays := if i.overlay.isSome then acc.overlays.push (n, p) else acc.overlays,
+                   tickers := match w.every e st with
+                     | some ms => acc.tickers.push (i.id, ms)
+                     | none => acc.tickers }
+      indexList env win seen path moving 0 acc cs
     else acc
   | deferred .. => acc
 
-def indexList (win clip : Rect) (path : Array Nat) (idx : Nat) (acc : Index Msg) :
-    List (Node Msg) → Index Msg
+def indexList (env : Env) (win clip : Rect) (path : Array Nat) (moving : Bool) (idx : Nat)
+    (acc : Index Msg) : List (Node Msg) → Index Msg
   | [] => acc
   | c :: cs =>
-    indexList win clip path (idx + 1) (indexInto win (if c.inFlow then clip else win) (path.push idx) acc c) cs
+    indexList env win clip path moving (idx + 1)
+      (indexInto env win (if c.inFlow then clip else win) (path.push idx) moving acc c) cs
 end
 
 /-- Every node that can be seen, its id, box and path from the root, in preorder: visible, and
 not wholly clipped away by the boxes around it, such as a scroll's. -/
-def index (n : Node Msg) : Index Msg :=
-  indexInto n.viewport n.viewport #[] {} n
+def index (env : Env) (n : Node Msg) : Index Msg :=
+  indexInto env n.viewport n.viewport #[] false {} n
 
 mutual
 /-- Every visible node's id and box. -/

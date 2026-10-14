@@ -66,6 +66,10 @@ pub enum WindowEvent {
     Close,
     /// Assistive technology acts on a widget: 0 press, 1 focus.
     Access(u64, u64),
+    /// The window gained or lost keyboard focus.
+    Focus(bool),
+    /// The window can or cannot be seen.
+    Visible(bool),
 }
 
 fn put_key(w: &mut Writer, k: &Key) {
@@ -173,6 +177,14 @@ pub fn encode_events(evs: &[WindowEvent]) -> Vec<u8> {
                 w.nat(3);
                 w.nat(*id);
                 w.nat(*action);
+            }
+            WindowEvent::Focus(b) => {
+                w.nat(4);
+                w.bool(*b);
+            }
+            WindowEvent::Visible(b) => {
+                w.nat(5);
+                w.bool(*b);
             }
         }
     }
@@ -322,6 +334,8 @@ pub fn sample() -> Vec<WindowEvent> {
         WindowEvent::Resize(64000, 48000),
         WindowEvent::Close,
         WindowEvent::Access(7, 1),
+        WindowEvent::Focus(false),
+        WindowEvent::Visible(true),
     ]
 }
 
@@ -361,7 +375,8 @@ mod tests {
     #[test]
     fn events_encode() {
         let bytes = encode_events(&sample());
-        assert_eq!(bytes[0], 13);
+        assert_eq!(bytes[0], 15);
+        assert_eq!(encode_events(&[WindowEvent::Focus(false), WindowEvent::Visible(true)]), [2, 4, 0, 5, 1]);
         assert_eq!(encode_events(&[WindowEvent::Close]), [1, 2]);
         assert_eq!(encode_events(&[WindowEvent::Resize(1, -1)]), [1, 1, 2, 1]);
     }

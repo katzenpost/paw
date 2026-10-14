@@ -92,6 +92,9 @@ inductive Cmd (Msg : Type) (caps : List Cap) : Origin → Type where
       Cmd Msg caps o
   | setTitle {o : Origin} (title : SafeName) : Cmd Msg caps o
   | quit {o : Origin} : Cmd Msg caps o
+  /-- `m` to `update` in `ms` milliseconds, as a message of origin `other`: a timer carries no
+  authority, whatever started it. -/
+  | after {o : Origin} (ms : Nat) (m : Msg) : Cmd Msg caps o
 
 namespace Cmd
 
@@ -111,6 +114,7 @@ def mapMsg {β : Type} (f : Msg → β) : Cmd Msg caps o → Cmd β caps o
   | .notify t b g => .notify t b g
   | .setTitle t => .setTitle t
   | .quit => .quit
+  | .after ms m => .after ms (f m)
 
 /-- A component's command as its parent's, whose capabilities include the component's. -/
 def lift {caps' : List Cap} (sub : caps ⊆ caps') : Cmd Msg caps o → Cmd Msg caps' o
@@ -119,6 +123,7 @@ def lift {caps' : List Cap} (sub : caps ⊆ caps') : Cmd Msg caps o → Cmd Msg 
   | .notify t b g => .notify t b (sub g)
   | .setTitle t => .setTitle t
   | .quit => .quit
+  | .after ms m => .after ms m
 
 theorem lift_usesAuthority {caps' : List Cap} (sub : caps ⊆ caps') (c : Cmd Msg caps o) :
     (c.lift sub).usesAuthority = c.usesAuthority := by

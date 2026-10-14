@@ -67,6 +67,11 @@ inductive InputKind where
   | leaveWindow
   deriving Repr, DecidableEq, Inhabited
 
+/-- Keys, text and pastes: input from the keyboard. -/
+def InputKind.keyboard : InputKind → Bool
+  | .key .. | .text _ | .paste _ => true
+  | _ => false
+
 /-- Input from the platform. -/
 structure Input where
   kind : InputKind
@@ -107,8 +112,14 @@ structure Router where
   /-- Modals that opened other than by the user's input, and overlays inside them: never drawn,
   never reached. -/
   refused : Std.HashSet WidgetId := {}
-  /-- The overlays to draw, bottom first, with their paths: those open and not refused. -/
-  shown : Array (WidgetId × List Nat) := #[]
+  /-- The overlays to draw, bottom first, with their paths and kinds: those open and not refused. -/
+  shown : Array (WidgetId × List Nat × Overlay) := #[]
+  /-- Widgets that want ticks: how often, and when the next is due. -/
+  ticks : Std.HashMap WidgetId (Nat × Nat) := {}
+  /-- When the pointer came to rest on the hovered widget. -/
+  hoverSince : Nat := 0
+  /-- How long the pointer rests on something before its tooltip shows. -/
+  tipMs : Nat := 1000
   /-- Inputs routed so far. -/
   serial : Nat := 0
   stableMs : Nat := 500
@@ -120,20 +131,20 @@ variable {Msg : Type}
 
 /-- Notes where every widget is at `now`, after a layout, and its path for delivering to it, and
 which overlays are open. -/
-def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
-  let index := tree.index
+def observe (rt : Router) (tree : Node Msg) (now : Nat) (env : Env := Env.mock) : Router :=
+  let index := tree.index { env with now }
   let idx := index.nodes
   let (placed, paths) := idx.foldl (init := (Std.HashMap.emptyWithCapacity idx.size,
       Std.HashMap.emptyWithCapacity idx.size))
     fun ((placed : Std.HashMap WidgetId (Rect × Nat)), (paths : Std.HashMap WidgetId (List Nat)))
-        (id, r, path) =>
+        (id, r, path, moving) =>
       let since := match rt.placed[id]? with
-        | some (r', t) => if r' == r then t else now
+        | some (r', t) => if r' == r && !moving then t else now
         | none => now
       (placed.insert id (r, since), paths.insert id path)
   -- A modal may open only with a token from the input being handled.
   let (ok, shown, opened, refused, _) := index.overlays.foldl
-    (init := (([] : List (WidgetId × Overlay)), (#[] : Array (WidgetId × List Nat)),
+    (init := (([] : List (WidgetId × Overlay)), (#[] : Array (WidgetId × List Nat × Overlay)),
       ({} : Std.HashSet WidgetId), ({} : Std.HashSet WidgetId), ([] : List (List Nat))))
     fun (ok, shown, opened, refused, refusedPaths) (o, path) =>
       let refuse := (ok, shown, opened, refused.insert o.id, path :: refusedPaths)
@@ -142,15 +153,40 @@ def observe (rt : Router) (tree : Node Msg) (now : Nat) : Router :=
         | some .modal =>
           if rt.opened.contains o.id ||
               (!rt.refused.contains o.id && (o.state? Modal).any (some ·.serial == rt.consent)) then
-            ((o.id, .modal) :: ok, shown.push (o.id, path), opened.insert o.id, refused, refusedPaths)
+            ((o.id, .modal) :: ok, shown.push (o.id, path, .modal), opened.insert o.id, refused, refusedPaths)
           else refuse
-        | some k => ((o.id, k) :: ok, shown.push (o.id, path), opened, refused, refusedPaths)
+        -- A tooltip takes no input, so it is never the overlay input goes to.
+        | some .tip => (ok, shown.push (o.id, path, .tip), opened, refused, refusedPaths)
+        | some k => ((o.id, k) :: ok, shown.push (o.id, path, k), opened, refused, refusedPaths)
         | none => (ok, shown, opened, refused, refusedPaths)
   -- Focus, hover and press on a widget that left the tree go with it. One scrolled out of view is
   -- not in `paths` but is still in the tree.
   let here (id : Option WidgetId) := id.filter fun i => paths.contains i || (tree.find? i).isSome
-  { rt with placed, paths, opened, refused, shown, overlay := ok.head?, focused := here rt.focused,
+  -- A ticker keeps its next tick if it still ticks as often; a new one is due a period from now.
+  let ticks := index.tickers.foldl (init := Std.HashMap.emptyWithCapacity index.tickers.size)
+    fun (m : Std.HashMap WidgetId (Nat × Nat)) (id, ms) =>
+      let due := match rt.ticks[id]? with
+        | some (ms', d) => if ms' == ms then d else now + ms
+        | none => now + ms
+      m.insert id (ms, due)
+  { rt with placed, paths, opened, refused, shown, ticks, overlay := ok.head?, focused := here rt.focused,
             hovered := here rt.hovered, pressed := here rt.pressed }
+
+/-- Whether the pointer or focus is in the parent of the overlay at `path`: its anchor. -/
+def inAnchor (rt : Router) (path : List Nat) (id : Option WidgetId) : Bool :=
+  (id.bind (rt.paths[·]?)).any path.dropLast.isPrefixOf
+
+/-- The tooltip at `path` shows at `now`: the pointer has rested on its anchor for `tipMs`, or
+focus is in it. -/
+def tipShown (rt : Router) (path : List Nat) (now : Nat) : Bool :=
+  (rt.inAnchor path rt.hovered && now ≥ rt.hoverSince + rt.tipMs) || rt.inAnchor path rt.focused
+
+/-- When tooltips waiting for the pointer to rest are due to show. -/
+def tipDeadlines (rt : Router) (now : Nat) : List Nat :=
+  rt.shown.toList.filterMap fun (_, path, k) =>
+    if k == .tip && rt.inAnchor path rt.hovered && !rt.tipShown path now then
+      some (rt.hoverSince + rt.tipMs)
+    else none
 
 /-- The topmost open overlay's node. -/
 def overlayNode (rt : Router) (tree : Node Msg) : Option (Node Msg) :=
@@ -227,12 +263,12 @@ theorem nextFocus_mem {order : List WidgetId} {current : Option WidgetId} {back 
   · exact List.mem_reverse.mp this
   · exact this
 
-def hover (rt : Router) (to : Option WidgetId) (p : Point) : Router × List Delivery :=
+def hover (rt : Router) (to : Option WidgetId) (p : Point) (now : Nat) : Router × List Delivery :=
   if to == rt.hovered then (rt, [])
   else
     let leave := rt.hovered.toList.map fun id => { target := id, event := .leave p }
     let enter := to.toList.map fun id => { target := id, event := .enter p }
-    ({ rt with hovered := to }, leave ++ enter)
+    ({ rt with hovered := to, hoverSince := now }, leave ++ enter)
 
 /-- Routes one input through `tree`: the router after it, and the events it gives widgets. -/
 def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery :=
@@ -244,7 +280,7 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
   let inside := (rt.focused.filter rt.trapped)
   let keyTarget (k : Key) : Option WidgetId := match rt.overlay with
     | some (o, .modal) => inside.orElse fun _ => some o
-    | some (o, .popup) => if k == .escape then inside.orElse fun _ => some o else rt.focused
+    | some (o, _) => if k == .escape then inside.orElse fun _ => some o else rt.focused
     | none => rt.focused
   -- Text goes to the focused widget, unless a modal is open and focus is outside it.
   let textTarget := match rt.overlay with
@@ -274,11 +310,11 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     | none => (rt, [])
   | .move p =>
     let target := (at? p).map (·.id)
-    let (rt, hov) := rt.hover target p
+    let (rt, hov) := rt.hover target p i.time
     let moveTo := rt.pressed.orElse fun _ => target
     (rt, hov ++ moveTo.toList.map fun id => { target := id, event := .move p })
   | .leaveWindow =>
-    let (rt, hov) := rt.hover none ⟨0, 0⟩
+    let (rt, hov) := rt.hover none ⟨0, 0⟩ i.time
     (rt, hov)
   | .wheel p dx dy =>
     (rt, ((at? p).map (·.id)).toList.map fun id => { target := id, event := .wheel p dx dy })

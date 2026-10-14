@@ -36,6 +36,11 @@ builds and runs the gallery, an example with every widget Paw has. Its code is i
 
 ## Documents
 
-- [API docs](https://katzenpost.github.io/paw/): every public definition, built from the docstrings by doc-gen4 (`make docs` builds them locally).
+Written by hand, in `docs/`:
+
 - [DESIGN.md](docs/DESIGN.md): how Paw is built, what it keeps from monomer and what it changes, and the laws its types carry.
 - [GUI_SECURITY_GUIDELINES.md](docs/GUI_SECURITY_GUIDELINES.md): the security rules for GUI applications that Paw enforces.
+
+Generated from the code:
+
+- [API docs](https://katzenpost.github.io/paw/): every public definition with its docstring, built by doc-gen4 and published from `main`. `make docs` builds them locally.

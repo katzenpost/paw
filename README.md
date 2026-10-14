@@ -6,6 +6,24 @@ Paw is a GUI library for Lean in the Elm style: an app is a model, an `update` t
 
 It runs on Linux desktop, on X11 and Wayland, with a platform layer in Rust.
 
+## Dependencies
+
+Paw builds with Lean 4 (the version in `lean-toolchain`, from [elan](https://github.com/leanprover/elan)) and Rust (from [rustup](https://rustup.rs)). Lake builds the Rust crate in `rust/` with cargo and links it into each executable, so neither needs setting up by hand beyond installing the toolchains.
+
+The Rust platform layer is built on these crates:
+
+- [winit](https://github.com/rust-windowing/winit) opens windows and reads input on X11 and Wayland.
+- [tiny-skia](https://github.com/RazrFalcon/tiny-skia) draws, and [softbuffer](https://github.com/rust-windowing/softbuffer) puts the drawn pixels on screen without a GPU.
+- [cosmic-text](https://github.com/pop-os/cosmic-text) shapes and lays out text.
+- [AccessKit](https://github.com/AccessKit/accesskit) exposes the widget tree to screen readers over AT-SPI.
+- [arboard](https://github.com/1Password/arboard) reads and writes the clipboard.
+- [image](https://github.com/image-rs/image) decodes PNG and JPEG.
+- [lean-sys](https://github.com/katzenpost/lean-sys) gives Rust the Lean runtime's C API.
+
+On the Lean side, [LeanBench](https://github.com/alok/LeanBench) runs the benchmarks.
+
+The end-to-end tests (`make e2e`) drive the gallery as a user would and need more installed: Xvfb and xdotool for X11; sway, wtype and jq for Wayland; and `dbus-run-session`, the AT-SPI bus and Python's `gi` bindings for AT-SPI. With xclip and wl-clipboard installed they also check the clipboard. `make ci` runs everything, end-to-end tests included.
+
 ## Try it
 
 ```

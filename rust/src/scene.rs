@@ -37,13 +37,31 @@ pub struct TextStyle {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Draw {
-    Fill { rect: Rect, color: Color, radius: i64 },
-    Stroke { rect: Rect, color: Color, width: i64, radius: i64 },
-    Text { at: Point, text: String, style: TextStyle },
+    Fill {
+        rect: Rect,
+        color: Color,
+        radius: i64,
+    },
+    Stroke {
+        rect: Rect,
+        color: Color,
+        width: i64,
+        radius: i64,
+    },
+    Text {
+        at: Point,
+        text: String,
+        style: TextStyle,
+    },
     /// The image with an id from `image::register`, scaled into `rect`, at opacity `alpha`.
     Image { rect: Rect, id: u64, alpha: u8 },
     /// A path through `points`, closed if `closed`, filled and stroked if given.
-    Path { points: Vec<Point>, closed: bool, fill: Option<Color>, stroke: Option<(Color, i64)> },
+    Path {
+        points: Vec<Point>,
+        closed: bool,
+        fill: Option<Color>,
+        stroke: Option<(Color, i64)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -52,33 +70,75 @@ pub struct Scene {
 }
 
 fn rect(r: &mut Reader) -> Option<Rect> {
-    Some(Rect { x0: r.int()?, y0: r.int()?, x1: r.int()?, y1: r.int()? })
+    Some(Rect {
+        x0: r.int()?,
+        y0: r.int()?,
+        x1: r.int()?,
+        y1: r.int()?,
+    })
 }
 
 fn color(r: &mut Reader) -> Option<Color> {
-    Some(Color { r: r.u8()?, g: r.u8()?, b: r.u8()?, a: r.u8()? })
+    Some(Color {
+        r: r.u8()?,
+        g: r.u8()?,
+        b: r.u8()?,
+        a: r.u8()?,
+    })
 }
 
 fn draw(r: &mut Reader) -> Option<Draw> {
     Some(match r.nat()? {
-        0 => Draw::Fill { rect: rect(r)?, color: color(r)?, radius: r.int()? },
-        1 => Draw::Stroke { rect: rect(r)?, color: color(r)?, width: r.int()?, radius: r.int()? },
-        2 => Draw::Text {
-            at: Point { x: r.int()?, y: r.int()? },
-            text: r.string()?,
-            style: TextStyle { size: r.int()?, color: color(r)?, bold: r.bool()? },
+        0 => Draw::Fill {
+            rect: rect(r)?,
+            color: color(r)?,
+            radius: r.int()?,
         },
-        3 => Draw::Image { rect: rect(r)?, id: r.nat()?, alpha: r.u8()? },
+        1 => Draw::Stroke {
+            rect: rect(r)?,
+            color: color(r)?,
+            width: r.int()?,
+            radius: r.int()?,
+        },
+        2 => Draw::Text {
+            at: Point {
+                x: r.int()?,
+                y: r.int()?,
+            },
+            text: r.string()?,
+            style: TextStyle {
+                size: r.int()?,
+                color: color(r)?,
+                bold: r.bool()?,
+            },
+        },
+        3 => Draw::Image {
+            rect: rect(r)?,
+            id: r.nat()?,
+            alpha: r.u8()?,
+        },
         4 => {
             let n = r.count()?;
             let mut points = Vec::with_capacity(n);
             for _ in 0..n {
-                points.push(Point { x: r.int()?, y: r.int()? });
+                points.push(Point {
+                    x: r.int()?,
+                    y: r.int()?,
+                });
             }
             let closed = r.bool()?;
             let fill = if r.bool()? { Some(color(r)?) } else { None };
-            let stroke = if r.bool()? { Some((color(r)?, r.int()?)) } else { None };
-            Draw::Path { points, closed, fill, stroke }
+            let stroke = if r.bool()? {
+                Some((color(r)?, r.int()?))
+            } else {
+                None
+            };
+            Draw::Path {
+                points,
+                closed,
+                fill,
+                stroke,
+            }
         }
         _ => return None,
     })
@@ -102,13 +162,22 @@ impl Scene {
         for (clip, d) in &self.items {
             put_rect(&mut w, clip);
             match d {
-                Draw::Fill { rect, color, radius } => {
+                Draw::Fill {
+                    rect,
+                    color,
+                    radius,
+                } => {
                     w.nat(0);
                     put_rect(&mut w, rect);
                     put_color(&mut w, color);
                     w.int(*radius);
                 }
-                Draw::Stroke { rect, color, width, radius } => {
+                Draw::Stroke {
+                    rect,
+                    color,
+                    width,
+                    radius,
+                } => {
                     w.nat(1);
                     put_rect(&mut w, rect);
                     put_color(&mut w, color);
@@ -130,7 +199,12 @@ impl Scene {
                     w.nat(*id);
                     w.u8(*alpha);
                 }
-                Draw::Path { points, closed, fill, stroke } => {
+                Draw::Path {
+                    points,
+                    closed,
+                    fill,
+                    stroke,
+                } => {
                     w.nat(4);
                     w.nat(points.len() as u64);
                     for p in points {
@@ -173,21 +247,57 @@ mod tests {
     use super::*;
 
     fn sample() -> Scene {
-        let r = Rect { x0: 0, y0: 0, x1: 6400, y1: 1280 };
-        let c = Color { r: 255, g: 0, b: 0, a: 255 };
+        let r = Rect {
+            x0: 0,
+            y0: 0,
+            x1: 6400,
+            y1: 1280,
+        };
+        let c = Color {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
         Scene {
             items: vec![
-                (r, Draw::Fill { rect: r, color: c, radius: 0 }),
-                (r, Draw::Stroke { rect: r, color: c, width: 64, radius: 256 }),
+                (
+                    r,
+                    Draw::Fill {
+                        rect: r,
+                        color: c,
+                        radius: 0,
+                    },
+                ),
+                (
+                    r,
+                    Draw::Stroke {
+                        rect: r,
+                        color: c,
+                        width: 64,
+                        radius: 256,
+                    },
+                ),
                 (
                     r,
                     Draw::Text {
                         at: Point { x: -128, y: 128 },
                         text: "hi ␛ 🚀".into(),
-                        style: TextStyle { size: 896, color: c, bold: true },
+                        style: TextStyle {
+                            size: 896,
+                            color: c,
+                            bold: true,
+                        },
                     },
                 ),
-                (r, Draw::Image { rect: r, id: 7, alpha: 128 }),
+                (
+                    r,
+                    Draw::Image {
+                        rect: r,
+                        id: 7,
+                        alpha: 128,
+                    },
+                ),
                 (
                     r,
                     Draw::Path {
@@ -197,7 +307,15 @@ mod tests {
                         stroke: Some((c, 128)),
                     },
                 ),
-                (r, Draw::Path { points: vec![], closed: false, fill: None, stroke: None }),
+                (
+                    r,
+                    Draw::Path {
+                        points: vec![],
+                        closed: false,
+                        fill: None,
+                        stroke: None,
+                    },
+                ),
             ],
         }
     }
@@ -210,9 +328,31 @@ mod tests {
     #[test]
     fn a_fill_matches_lean() {
         // Lean: Draw.codec.enc (.fill (r 0 0 1 1) red 0) after its clip, one item.
-        let r = Rect { x0: 0, y0: 0, x1: 64, y1: 64 };
-        let s = Scene { items: vec![(r, Draw::Fill { rect: r, color: Color { r: 255, g: 0, b: 0, a: 255 }, radius: 0 })] };
-        assert_eq!(s.encode(), [1, 0, 0, 0x80, 1, 0x80, 1, 0, 0, 0, 0x80, 1, 0x80, 1, 255, 0, 0, 255, 0]);
+        let r = Rect {
+            x0: 0,
+            y0: 0,
+            x1: 64,
+            y1: 64,
+        };
+        let s = Scene {
+            items: vec![(
+                r,
+                Draw::Fill {
+                    rect: r,
+                    color: Color {
+                        r: 255,
+                        g: 0,
+                        b: 0,
+                        a: 255,
+                    },
+                    radius: 0,
+                },
+            )],
+        };
+        assert_eq!(
+            s.encode(),
+            [1, 0, 0, 0x80, 1, 0x80, 1, 0, 0, 0, 0x80, 1, 0x80, 1, 255, 0, 0, 255, 0]
+        );
     }
 
     #[test]

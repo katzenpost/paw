@@ -4,9 +4,12 @@
 # Rust comes from rustup and Lean from elan.
 export PATH := $(HOME)/.cargo/bin:$(HOME)/.elan/bin:$(PATH)
 
-.PHONY: demo all build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland e2e-atspi bench bench-lean bench-rust
+.PHONY: demo all ci build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland e2e-atspi bench bench-lean bench-rust
 
 all: test coverage goldens
+
+# Everything CI runs.
+ci: all check e2e
 
 build:
 	lake build
@@ -25,6 +28,7 @@ coverage:
 	lake exe paw-coverage
 
 check:
+	cd rust && cargo fmt --check
 	cd rust && cargo clippy --quiet -- -D warnings
 
 goldens:

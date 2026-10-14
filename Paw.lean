@@ -30,5 +30,6 @@ import Paw.Format
 import Paw.Widgets.Input
 import Paw.Widgets.Slider
 import Paw.Widgets.List
+import Paw.Widgets.Split
 import Paw.Ui
 import Paw.Linux

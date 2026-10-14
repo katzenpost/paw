@@ -23,14 +23,28 @@ def scrollStep : Int := px 40
 
 structure ScrollState where
   offset : Int := 0
+  /-- How far the content is scrolled left, when it scrolls across. -/
+  offsetX : Int := 0
   deriving TypeName, Repr, Inhabited
 
 /-- The scroll offset kept within what the content allows. -/
 def clampOffset (off contentH viewH : Int) : Int := max 0 (min off (contentH - viewH))
 
-/-- The child fills the content rectangle. -/
-def scrollLayout : Layout where
-  name := "vscroll"
+/-- Which ways a scroll scrolls. -/
+inductive ScrollAxes where
+  | vertical
+  | horizontal
+  | both
+  deriving Repr, DecidableEq, Inhabited
+
+def ScrollAxes.across (a : ScrollAxes) : Bool := a != .vertical
+def ScrollAxes.down (a : ScrollAxes) : Bool := a != .horizontal
+
+/-- The child fills the content rectangle. Along a way the scroll scrolls, the scroll asks for what
+the child asks, as room it may have but need not; across the other it asks what the child asks,
+and the gutter. -/
+def scrollLayoutFor (axes : ScrollAxes) : Layout where
+  name := match axes with | .vertical => "vscroll" | .horizontal => "hscroll" | .both => "scroll"
   assign := fun v items => items.map fun _ => v
   assign_length := by simp
   assign_within := by
@@ -42,37 +56,56 @@ def scrollLayout : Layout where
     let vis := items.filter (·.visible)
     let h := mergeAll mergeMax (vis.map (·.h))
     let w := mergeAll mergeMax (vis.map (·.w))
-    ({ w with fixed := w.fixed + gutter.toNat }, flexSize (h.fixed + h.flex))
+    let pad (r : SizeReq) (on : Bool) : SizeReq := if on then { r with fixed := r.fixed + gutter.toNat } else r
+    (if axes.across then flexSize (w.fixed + w.flex) else pad w axes.down,
+     if axes.down then flexSize (h.fixed + h.flex) else pad h axes.across)
 
-def scrollWidget {Msg : Type} : Widget Msg :=
+/-- A scroll along `axes`: its content as large as the child asks along them, shifted by the
+offsets, clear of the gutters its bars are drawn in. -/
+def scrollWidgetFor {Msg : Type} (axes : ScrollAxes) : Widget Msg :=
+  -- The view, less the gutters for the bars.
+  let inner (v : Rect) : Rect :=
+    Rect.ofXYWH v.x0 v.y0 (v.width - if axes.down then gutter else 0) (v.height - if axes.across then gutter else 0)
   Widget.Spec.build (σ := ScrollState) {
-    kind := "scroll"
+    kind := match axes with | .vertical => "scroll" | .horizontal => "hscroll" | .both => "scroll2"
     init := {}
     sizeReq := fun _ _ => ({}, {})
-    content := fun _ st v (_, rh) =>
-      let h := max v.height (rh.flex : Int)
-      let off := clampOffset st.offset h v.height
-      Rect.ofXYWH v.x0 (v.y0 - off) (v.width - gutter) h
+    content := fun _ st v (rw, rh) =>
+      let i := inner v
+      let w := if axes.across then max i.width (rw.flex : Int) else i.width
+      let h := if axes.down then max i.height (rh.flex : Int) else i.height
+      Rect.ofXYWH (v.x0 - clampOffset st.offsetX w i.width) (v.y0 - clampOffset st.offset h i.height) w h
     render := fun env _ v =>
-      let ch := env.content.height
-      if ch ≤ v.height then Scene.empty
-      else
-        let thumbH := max (px 16) (v.height * v.height / ch)
-        let off := v.y0 - env.content.y0
-        let y := v.y0 + off * (v.height - thumbH) / max 1 (ch - v.height)
-        Scene.inBox v [.fill (Rect.ofXYWH (v.x1 - gutter + px 2) y (gutter - px 4) thumbH) env.theme.border (px 2)]
-    render_within := fun _ _ v => by
-      dsimp only
-      split
-      · exact Scene.empty_within v
-      · exact Scene.inBox_within v _
+      let i := inner v
+      let c := env.content
+      let bar (len content off : Int) : Int × Int :=
+        let thumb := max (px 16) (len * len / max 1 content)
+        (off * (len - thumb) / max 1 (content - len), thumb)
+      let vbar := if axes.down && c.height > i.height then
+          let (y, thumbH) := bar i.height c.height (v.y0 - c.y0)
+          [Draw.fill (Rect.ofXYWH (v.x1 - gutter + px 2) (v.y0 + y) (gutter - px 4) thumbH) env.theme.border (px 2)]
+        else []
+      let hbar := if axes.across && c.width > i.width then
+          let (x, thumbW) := bar i.width c.width (v.x0 - c.x0)
+          [Draw.fill (Rect.ofXYWH (v.x0 + x) (v.y1 - gutter + px 2) thumbW (gutter - px 4)) env.theme.border (px 2)]
+        else []
+      Scene.inBox v (vbar ++ hbar)
+    render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun env st v e =>
-      let ch := env.content.height
-      let by_ (d : Int) := some ({ offset := clampOffset (clampOffset st.offset ch v.height + d) ch v.height }, [])
+      let i := inner v
+      let c := env.content
+      let byY (d : Int) := { st with offset := clampOffset (clampOffset st.offset c.height i.height + d) c.height i.height }
+      let byX (d : Int) := { st with offsetX := clampOffset (clampOffset st.offsetX c.width i.width + d) c.width i.width }
       match e with
-      | .wheel _ _ dy => by_ (dy * scrollStep)
-      | .key .pageDown _ true => by_ (v.height - scrollStep)
-      | .key .pageUp _ true => by_ (scrollStep - v.height)
+      | .wheel _ dx dy =>
+        -- A wheel turned for the way a scroll does not scroll moves it the way it does.
+        let st := if axes.down then byY (dy * scrollStep) else byX (dy * scrollStep)
+        let st := if axes.across && dx != 0 then
+            { st with offsetX := clampOffset (clampOffset st.offsetX c.width i.width + dx * scrollStep) c.width i.width }
+          else st
+        some (st, [])
+      | .key .pageDown _ true => if axes.down then some (byY (i.height - scrollStep), []) else none
+      | .key .pageUp _ true => if axes.down then some (byY (scrollStep - i.height), []) else none
       | _ => none
     access := fun _ _ => some { role := .scrollView } }
 

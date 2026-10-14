@@ -15,6 +15,7 @@ import Paw.Widgets.Choice
 import Paw.Widgets.Input
 import Paw.Widgets.Slider
 import Paw.Widgets.List
+import Paw.Widgets.Split
 
 /-! # Building views
 
@@ -90,9 +91,18 @@ def lazy {α : Type} [BEq α] [TypeName α] (arg : α) (view : α → Node Msg)
     (key : Option String := none) : Node Msg :=
   Node.lazy arg view key
 
-/-- The child, scrolled vertically. -/
-def scroll (child : Node Msg) (key : Option String := none) : Node Msg :=
-  Node.containerWith scrollWidget scrollLayout [child] key
+/-- The child, scrolled vertically, or along `axes`. -/
+def scroll (child : Node Msg) (key : Option String := none) (axes : ScrollAxes := .vertical) : Node Msg :=
+  Node.containerWith (scrollWidgetFor axes) (scrollLayoutFor axes) [child] key
+
+/-- The child, scrolled across. -/
+def hscroll (child : Node Msg) (key : Option String := none) : Node Msg := scroll child key .horizontal
+
+/-- `first` and `second` side by side, or if `vertical` one above the other, sharing the room by
+`ratio` thousandths for the first; dragging the divider between them asks for a new share. -/
+def split (first second : Node Msg) (ratio : Nat) (onResize : Nat → Msg) (vertical : Bool := false)
+    (key : Option String := none) : Node Msg :=
+  Node.containerWith (splitWidget vertical ratio onResize) (splitLayout vertical ratio) [first, second] key
 
 /-- The child with key bindings. -/
 def keystroke (bindings : List (KeyCombo × Msg)) (child : Node Msg) : Node Msg :=
@@ -224,7 +234,8 @@ def tabs {α : Type} [BEq α] (current : α) (onChange : α → Msg) (pages : Li
   let bar := Node.containerWith tabBar (hstack (px 2)).toLayout
     (pages.map fun (caption, a, _) => Node.leaf (Widgets.tab (SafeText.trusted caption) a current onChange) s!"tab-{caption}")
   let stack := Node.container zstack (pages.map fun (caption, a, page) =>
-    let page := page.withInfo ({ · with key := some s!"page-{caption}" })
+    -- Wrapped, so that the page keeps its own key.
+    let page := Node.container (box { expand := true }) [page] (some s!"page-{caption}")
     if a == current then page else page.hide)
   col [bar, separator, stack] (px 2) key
 

@@ -23,6 +23,7 @@ inductive Page where
   | choices
   | inputs
   | lists
+  | layout
   deriving Repr, BEq, Inhabited
 
 def fruits : List String :=
@@ -85,6 +86,7 @@ inductive Msg where
   | countryOpen (b : Bool)
   | color (c : String)
   | colorOpen (b : Bool)
+  | share (r : Nat)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -118,6 +120,7 @@ structure Model where
   countryOpen : Bool := false
   color : String := "green"
   colorOpen : Bool := false
+  share : Nat := 350
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
@@ -126,7 +129,7 @@ instance : BEq Model where
     a.align == b.align && a.bold == b.bold && a.quantity.val == b.quantity.val && a.price.val == b.price.val &&
     a.date == b.date && a.time == b.time && a.volume.val == b.volume.val && a.treble.val == b.treble.val &&
     a.bass.val == b.bass.val && a.fruit == b.fruit && a.country == b.country && a.countryOpen == b.countryOpen &&
-    a.color == b.color && a.colorOpen == b.colorOpen
+    a.color == b.color && a.colorOpen == b.colorOpen && a.share == b.share
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -193,6 +196,7 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .countryOpen b => modify fun (m, cs) => ({ m with countryOpen := b }, cs)
   | _, .color c => modify fun (m, cs) => ({ m with color := c }, cs)
   | _, .colorOpen b => modify fun (m, cs) => ({ m with colorOpen := b }, cs)
+  | _, .share r => modify fun (m, cs) => ({ m with share := r }, cs)
 
 /-- Radio buttons, option buttons, a toggle button and separators. -/
 def choicesPage (m : Model) : Node Msg :=
@@ -233,6 +237,14 @@ def listsPage (m : Model) : Node Msg :=
       Ui.width (px 180) (Ui.textDropdown ["red", "green", "blue", "orange"] m.color .color m.colorOpen .colorOpen "color")] (px 4)]
     (px 24)
 
+/-- A split between a scroll down a list and a grid that scrolls both ways. -/
+def layoutPage (m : Model) : Node Msg :=
+  let cell (r c : Nat) : Node Msg := Ui.width (px 72) (Ui.label s!"{(Char.ofNat (65 + c)).toString}{r + 1}")
+  Ui.split
+    (Ui.scroll (Ui.col ((List.range 40).map fun i => Ui.label s!"Item {i + 1}")) "items")
+    (Ui.scroll (Ui.col ((List.range 30).map fun r => Ui.row ((List.range 16).map (cell r)))) "grid" .both)
+    m.share .share (key := "split")
+
 /-- The first page: what the gallery had before it had tabs. -/
 def basicsPage (m : Model) : Node Msg :=
   Ui.col [
@@ -261,7 +273,8 @@ def view (m : Model) : Node Msg :=
   Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
   Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
     Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m),
-      ("Inputs", .inputs, inputsPage m), ("Lists", .lists, listsPage m)]] ++
+      ("Inputs", .inputs, inputsPage m), ("Lists", .lists, listsPage m),
+      ("Layout", .layout, layoutPage m)]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")

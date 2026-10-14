@@ -83,6 +83,14 @@ xdotool key Escape
 expect "dialog=false" "Escape cancels the confirmation"
 expect "plums" "and the list is kept"
 
+# Notes of many lines: Return puts a newline in a text area.
+click notes
+sleep 0.6
+xdotool type --delay 30 "one"
+xdotool key Return
+xdotool type --delay 30 "two"
+expect "notes=one|two" "typing reaches a text area, over two lines"
+
 # A task makes a picture, which the app hands to an image widget.
 click load
 expect "picture=true" "a task's picture is shown"

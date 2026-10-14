@@ -4,6 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Paw.Geometry
+import Paw.Text
 
 /-! # Input events
 
@@ -56,6 +57,8 @@ inductive Event where
   /-- Text typed, after the input method has composed it. -/
   | text (s : String)
   | paste (s : String)
+  /-- Text an input method is composing, not yet typed, with its cursor; empty when it ends. -/
+  | preedit (t : SafeText) (cursor : Nat)
   | focus
   | blur
   /-- Time, in milliseconds since the app started, for widgets that asked for it. -/

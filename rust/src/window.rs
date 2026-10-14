@@ -171,6 +171,15 @@ impl ApplicationHandler<accesskit_winit::Event> for App {
             }
             WE::RedrawRequested => self.present(),
             WE::Focused(f) => self.events.push(WindowEvent::Focus(f)),
+            WE::Ime(ime) => match ime {
+                winit::event::Ime::Preedit(s, cursor) => {
+                    let c = cursor.map(|(a, _)| s[..a.min(s.len())].chars().count()).unwrap_or(s.chars().count());
+                    self.input(InputKind::Preedit(s, c as u64));
+                }
+                winit::event::Ime::Commit(s) => self.input(InputKind::Text(s)),
+                winit::event::Ime::Disabled => self.input(InputKind::Preedit(String::new(), 0)),
+                winit::event::Ime::Enabled => {}
+            },
             WE::Occluded(o) => self.events.push(WindowEvent::Visible(!o)),
             WE::ModifiersChanged(m) => {
                 let s = m.state();
@@ -316,6 +325,19 @@ pub fn request(r: Request) {
                 app.adapter = None;
                 app.window = None;
                 app.surface = None;
+            }
+            Request::Ime(area) => {
+                if let Some(w) = &app.window {
+                    w.set_ime_allowed(area.is_some());
+                    if let Some(r) = area {
+                        let s = app.scale();
+                        let p = |u: i64| u as f64 / crate::render::UNITS as f64 * s;
+                        w.set_ime_cursor_area(
+                            winit::dpi::PhysicalPosition::new(p(r.x0), p(r.y0)),
+                            winit::dpi::PhysicalSize::new(p(r.x1 - r.x0).max(1.0), p(r.y1 - r.y0).max(1.0)),
+                        );
+                    }
+                }
             }
             Request::Cursor(c) => {
                 use winit::window::CursorIcon;

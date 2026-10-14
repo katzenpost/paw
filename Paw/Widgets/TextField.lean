@@ -80,7 +80,75 @@ def right (e : Edit) (extend : Bool) : Edit :=
 
 def selectAll (e : Edit) : Edit := { e with cursor := e.value.length, anchor := some 0 }
 
+/-- A character of a word: a letter, a digit, an underscore, or anything beyond ASCII. -/
+def wordChar (c : Char) : Bool := c.isAlphanum || c == '_' || c.toNat > 127
+
+/-- The start of the word at or before `i`: back over what is not a word, then over the word. -/
+def wordStart (cs : List Char) (i : Nat) : Nat :=
+  let before := (cs.take i).reverse
+  let gap := (before.takeWhile (!wordChar ·)).length
+  i - gap - ((before.drop gap).takeWhile wordChar).length
+
+/-- The end of the word at or after `i`: on over what is not a word, then over the word. -/
+def wordEnd (cs : List Char) (i : Nat) : Nat :=
+  let after := cs.drop i
+  let gap := (after.takeWhile (!wordChar ·)).length
+  min cs.length (i + gap + ((after.drop gap).takeWhile wordChar).length)
+
+def wordLeft (e : Edit) (extend : Bool) : Edit := e.moveTo (wordStart e.value e.cursor) extend
+
+def wordRight (e : Edit) (extend : Bool) : Edit := e.moveTo (wordEnd e.value e.cursor) extend
+
+/-- The word before the cursor deleted, or the selection. -/
+def deleteWordBack (e : Edit) : Edit :=
+  if e.selection.isSome then e.deleteSelection
+  else
+    let s := wordStart e.value e.cursor
+    { value := e.value.take s ++ e.value.drop e.cursor, cursor := s }
+
+/-- The word after the cursor deleted, or the selection. -/
+def deleteWordForward (e : Edit) : Edit :=
+  if e.selection.isSome then e.deleteSelection
+  else { value := e.value.take e.cursor ++ e.value.drop (wordEnd e.value e.cursor), cursor := e.cursor }
+
+/-- The start of the line `i` is on, in text whose lines end with newlines. -/
+def lineStart (cs : List Char) (i : Nat) : Nat :=
+  i - ((cs.take i).reverse.takeWhile (· != '\n')).length
+
+/-- The end of the line `i` is on, before its newline. -/
+def lineEnd (cs : List Char) (i : Nat) : Nat := i + ((cs.drop i).takeWhile (· != '\n')).length
+
 end Edit
+
+/-- What an edit can go back to: earlier states, latest first, and states undone, to redo. At most
+`History.limit` are kept. -/
+structure History (α : Type) where
+  past : List α := []
+  future : List α := []
+  deriving Inhabited
+
+namespace History
+
+variable {α : Type}
+
+def limit : Nat := 100
+
+/-- `s`, the state before a change, kept to go back to; what was undone can no longer be redone. -/
+def record (h : History α) (s : α) : History α := { past := (s :: h.past).take limit, future := [] }
+
+/-- The state before the last change, from `cur`, and the history after going back. -/
+def undo (h : History α) (cur : α) : Option (α × History α) :=
+  match h.past with
+  | s :: ps => some (s, { past := ps, future := cur :: h.future })
+  | [] => none
+
+/-- The state last undone, from `cur`, and the history after going forward again. -/
+def redo (h : History α) (cur : α) : Option (α × History α) :=
+  match h.future with
+  | s :: fs => some (s, { past := (cur :: h.past).take limit, future := fs })
+  | [] => none
+
+end History
 
 /-- What typing or pasting may put in a one-line field: no control characters, and line breaks
 and tabs as spaces. -/
@@ -95,7 +163,17 @@ structure TextFieldState where
   anchor : Option Nat := none
   /-- When the caret last moved or focus arrived: it shows from then, blinking. -/
   since : Nat := 0
-  deriving TypeName, Repr, Inhabited
+  /-- Values and cursors to undo to. -/
+  history : History (List Char × Nat) := {}
+  /-- Text an input method is composing at the caret, and its cursor. -/
+  preedit : Option (SafeText × Nat) := none
+  deriving TypeName, Inhabited
+
+/-- Text an input method is composing, drawn at `x` on the line in `v`, underlined. -/
+def preeditDraw (env : Env) (v : Rect) (x : Int) (t : SafeText) (style : TextStyle) : List Draw :=
+  let (w, h) := env.measure style t
+  let y := v.y0 + (v.height - h) / 2
+  [.text ⟨x, y⟩ t style, .fill (Rect.ofXYWH x (y + h - px 2) w (px 1)) style.color 0]
 
 /-- How long the caret shows, then hides, while it blinks. -/
 def blinkMs : Nat := 500
@@ -126,9 +204,19 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
     Widget Msg :=
   let chars := value.toList
   let edit (st : TextFieldState) : Edit := Edit.clamp { value := chars, cursor := st.cursor, anchor := st.anchor }
-  let result (now : Nat) (e : Edit) (extra : List (Req Msg) := []) : Option (TextFieldState × List (Req Msg)) :=
-    let changed := if e.value == chars then [] else [Req.emit (onChange (String.ofList e.value))]
-    some ({ cursor := e.cursor, anchor := e.anchor, since := now }, extra ++ changed)
+  let result (st : TextFieldState) (now : Nat) (e : Edit) (extra : List (Req Msg) := []) :
+      Option (TextFieldState × List (Req Msg)) :=
+    let same := e.value == chars
+    let changed := if same then [] else [Req.emit (onChange (String.ofList e.value))]
+    let history := if same then st.history else st.history.record (chars, st.cursor)
+    some ({ cursor := e.cursor, anchor := e.anchor, since := now, history, preedit := none }, extra ++ changed)
+  -- Going back or forward in the history: the value it holds, and its cursor.
+  let travel (st : TextFieldState) (now : Nat) (to : Option ((List Char × Nat) × History (List Char × Nat))) :
+      Option (TextFieldState × List (Req Msg)) :=
+    match to with
+    | some ((v, c), history) =>
+      some ({ st with cursor := c, anchor := none, since := now, history }, [Req.emit (onChange (String.ofList v))])
+    | none => some (st, [])
   Widget.Spec.build (σ := TextFieldState) {
     kind := "textField"
     init := { cursor := chars.length }
@@ -157,17 +245,27 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
       let caret := if caretShown env st.since then
           [Draw.fill (Rect.ofXYWH (x0 + caretX) (v.y0 + padY) (px 1) (v.height - 2 * padY)) s.fg 0]
         else []
-      Scene.inBox v (frame v s ++ sel ++ shown ++ caret)
+      let composing := match st.preedit with
+        | some (p, _) => Draw.fill (Rect.ofXYWH (x0 + caretX) (v.y0 + padY) (env.measure style p).1
+            (v.height - 2 * padY)) s.bg 0 :: preeditDraw env v (x0 + caretX) p style
+        | none => []
+      Scene.inBox v (frame v s ++ sel ++ shown ++ caret ++ composing)
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun env st v ev =>
       let e := edit st
-      let result (e : Edit) (extra : List (Req Msg) := []) := result env.now e extra
+      let result (e : Edit) (extra : List (Req Msg) := []) := result st env.now e extra
       match ev with
       | .text s | .paste s => result (e.insert (cleanInput s) cfg.maxLength)
-      | .key .backspace _ true => result e.backspace
-      | .key .delete _ true => result e.delete
-      | .key .left m true => result (e.left m.shift)
-      | .key .right m true => result (e.right m.shift)
+      | .key .backspace m true => result (if m.ctrl then e.deleteWordBack else e.backspace)
+      | .key .delete m true => result (if m.ctrl then e.deleteWordForward else e.delete)
+      | .key .left m true => result (if m.ctrl then e.wordLeft m.shift else e.left m.shift)
+      | .key .right m true => result (if m.ctrl then e.wordRight m.shift else e.right m.shift)
+      | .key (.char 'z') m true =>
+        if !m.ctrl then none
+        else if m.shift then travel st env.now (st.history.redo (chars, st.cursor))
+        else travel st env.now (st.history.undo (chars, st.cursor))
+      | .key (.char 'Z') m true | .key (.char 'y') m true =>
+        if m.ctrl then travel st env.now (st.history.redo (chars, st.cursor)) else none
       | .key .home m true => result (e.moveTo 0 m.shift)
       | .key .end_ m true => result (e.moveTo chars.length m.shift)
       | .key (.char 'a') m true => if m.ctrl then result e.selectAll else none
@@ -179,18 +277,39 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
       | .press p .primary =>
         let measure (t : SafeText) := (env.measure (textStyle env) t).1
         result (e.moveTo (indexAt measure chars (p.x - v.x0 - env.theme.textField.padding.1)) false)
+      | .preedit p c => some ({ st with preedit := if p.text.isEmpty then none else some (p, c) }, [])
       | .focus => some ({ st with since := env.now }, [])
-      | .tick _ | .blur | .enter _ | .leave _ => some (st, [])
+      | .blur => some ({ st with preedit := none }, [])
+      | .tick _ | .enter _ | .leave _ => some (st, [])
       | _ => none
     focusable := true
     every := some fun env _ => if env.isFocused && env.windowFocused then some blinkMs else none
     cursor := fun env _ => (env.look env.theme.textField).cursor
+    ime := some fun env st v =>
+      let (padX, padY) := env.theme.textField.padding
+      let inner := v.width - 2 * padX
+      let width (n : Nat) := (env.measure (textStyle env) (SafeText.filter (String.ofList (chars.take n)))).1
+      let caretX := width (min st.cursor chars.length)
+      let x := v.x0 + padX - max 0 (caretX - inner + px 2) + caretX
+      Rect.ofXYWH x (v.y0 + padY) (px 1) (v.height - 2 * padY)
     access := fun _ _ =>
       some { role := .textInput, name := cfg.placeholder, value := some (SafeText.filter value) } }
 
+/-- What a password field keeps: the secrets it held, to undo to. They are forgotten when the
+field loses focus, so no earlier secret outlives the editing of it. -/
+structure PasswordState where
+  history : History Secret := {}
+  deriving TypeName, Inhabited
+
 /-- A field for a secret: dots, no selection, no copying. -/
 def passwordField {Msg : Type} (value : Secret) (onChange : Secret → Msg) : Widget Msg :=
-  Widget.Spec.build (σ := NoState) {
+  let change (st : PasswordState) (s : Secret) : Option (PasswordState × List (Req Msg)) :=
+    some ({ history := st.history.record value }, [.emit (onChange s)])
+  let travel (st : PasswordState) (to : Option (Secret × History Secret)) : Option (PasswordState × List (Req Msg)) :=
+    match to with
+    | some (s, history) => some ({ history }, [.emit (onChange s)])
+    | none => some (st, [])
+  Widget.Spec.build (σ := PasswordState) {
     kind := "passwordField"
     init := {}
     sizeReq := fun env _ =>
@@ -204,9 +323,13 @@ def passwordField {Msg : Type} (value : Secret) (onChange : Secret → Msg) : Wi
     handle := fun _ st _ e => match e with
       | .text s | .paste s =>
         let cs := cleanInput s
-        if cs.isEmpty then some (st, []) else some (st, [.emit (onChange (cs.foldl Secret.push value))])
-      | .key .backspace _ true => some (st, [.emit (onChange value.pop)])
-      | .focus | .blur | .enter _ | .leave _ => some (st, [])
+        if cs.isEmpty then some (st, []) else change st (cs.foldl Secret.push value)
+      | .key .backspace _ true => change st value.pop
+      | .key (.char 'z') m true =>
+        if !m.ctrl then none else if m.shift then travel st (st.history.redo value) else travel st (st.history.undo value)
+      | .key (.char 'Z') m true | .key (.char 'y') m true => if m.ctrl then travel st (st.history.redo value) else none
+      | .blur => some ({}, [])
+      | .focus | .enter _ | .leave _ => some (st, [])
       | _ => none
     focusable := true
     cursor := fun env _ => (env.look env.theme.textField).cursor

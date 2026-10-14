@@ -50,24 +50,28 @@ structure TextCfg where
   overflow : TextOverflow := .clip
   deriving Repr, DecidableEq, Inhabited
 
-/-- Widths of words and of characters, each measured once. -/
+/-- Widths of words and of characters, each measured once, and how to measure one not yet seen. -/
 structure Widths where
   words : Std.HashMap String Int
   chars : Std.HashMap Char Int
+  measure : String → Int
 
 /-- The widths of every word and character in `lines`, in `style`. -/
 def Widths.of (env : Env) (style : TextStyle) (lines : List SafeText) : Widths :=
   let width (s : String) := (env.measure style (SafeText.trusted s)).1
-  lines.foldl (init := { words := {}, chars := {} }) fun acc l =>
+  lines.foldl (init := { words := {}, chars := {}, measure := width }) fun acc l =>
     let cs := l.text.toList
     let chars := cs.foldl (fun m c => if m.contains c then m else m.insert c (width c.toString)) acc.chars
     let words := (Wrap.words cs).foldl (fun m (w, _) =>
       let k := String.ofList w
       if m.contains k then m else m.insert k (width k)) acc.words
-    { words, chars }
+    { acc with words, chars }
 
-def Widths.word (ws : Widths) (w : List Char) : Int := ws.words.getD (String.ofList w) 0
-def Widths.char (ws : Widths) (c : Char) : Int := ws.chars.getD c 0
+def Widths.word (ws : Widths) (w : List Char) : Int :=
+  let k := String.ofList w
+  (ws.words[k]?).getD (ws.measure k)
+
+def Widths.char (ws : Widths) (c : Char) : Int := (ws.chars[c]?).getD (ws.measure c.toString)
 
 /-- The ellipsis Paw draws where it cuts text short. -/
 def ellipsisChar : Char := '…'

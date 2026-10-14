@@ -617,6 +617,11 @@ def envAlong (env : Env) : List Nat → Node Msg → Env
     | none => env
   | _, deferred .. => env
 
+/-- Where the node's caret is for an input method, if it takes composed text. -/
+def imeArea (env : Env) : Node Msg → Option Rect
+  | mk w st i .. => w.ime.map fun f => f (envAt env i) st i.viewport
+  | deferred .. => none
+
 /-- The pointer's shape over the node. -/
 def cursor (env : Env) : Node Msg → Cursor
   | mk w st i .. => w.cursor (envAt env i) st

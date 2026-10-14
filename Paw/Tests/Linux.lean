@@ -34,7 +34,8 @@ def sample : List WindowEvent := [
   .close,
   .access ⟨7⟩ .focus,
   .focus false,
-  .visible true]
+  .visible true,
+  input (.preedit "日本" 1) 11]
 
 def echoes (r : Request) : Bool :=
   match requestEnc r with
@@ -45,7 +46,7 @@ def isPng (b : ByteArray) : Bool := b.size > 8 && b.data.toList.take 4 == [0x89,
 
 def tests : TestM Unit := do
   let decoded := (list eventCodec).decodeAll (ofBytes (Ffi.sampleEvents ()))
-  check "Lean decodes the events Rust encodes" (decoded.map (·.length) == some 15)
+  check "Lean decodes the events Rust encodes" (decoded.map (·.length) == some 16)
   check "and they are the events meant"
     (decoded.any fun ds => (ds.zip sample).all fun (a, b) => eventEnc a == eventEnc b)
   check "a set title request reaches Rust" (echoes (.setTitle (SafeName.filter "t")))
@@ -54,6 +55,8 @@ def tests : TestM Unit := do
   check "a notification" (echoes (.notify (SafeName.filter "a") (SafeText.filter "b")))
   check "quit" (echoes .quit)
   check "the pointer's shape" ([Cursor.default, .pointer, .text, .resizeH, .resizeV].all (echoes ∘ .cursor))
+  check "an input method on, with its caret" (echoes (.ime (some (Rect.ofXYWH 64 128 64 1280))))
+  check "and off" (echoes (.ime none))
   let field : Access := { role := .textInput, name := SafeText.trusted "name", value := some (SafeText.trusted "Ada") }
   let box : Access := { role := .checkBox, checked := some true }
   let pw : Access := { role := .passwordInput, value := some (SafeText.trusted "pw") }

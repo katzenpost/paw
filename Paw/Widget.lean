@@ -155,6 +155,10 @@ structure Widget (Msg : Type) where
   /-- For a widget whose height depends on its width, such as a wrapped paragraph: its height
   request at a width. The tree asks once widths are known. -/
   heightFor : Option (Env → Dynamic → Int → SizeReq)
+  /-- For a widget that takes text an input method composes: where its caret is, given its box,
+  for the input method to place its window by. A widget without one turns the input method off
+  while it has focus, as a password field must. -/
+  ime : Option (Env → Dynamic → Rect → Rect)
 
 /-- A widget over its own state type `σ`. -/
 structure Widget.Spec (Msg σ : Type) where
@@ -174,6 +178,7 @@ structure Widget.Spec (Msg σ : Type) where
   mapChildren : Env → σ → Scene → Scene := fun _ _ s => s
   cursor : Env → σ → Cursor := fun _ _ => .default
   heightFor : Option (Env → σ → Int → SizeReq) := none
+  ime : Option (Env → σ → Rect → Rect) := none
 
 namespace Widget.Spec
 
@@ -200,6 +205,7 @@ def build (s : Widget.Spec Msg σ) : Widget Msg where
   mapChildren := fun env d => s.mapChildren env (s.state d)
   cursor := fun env d => s.cursor env (s.state d)
   heightFor := s.heightFor.map fun f env d => f env (s.state d)
+  ime := s.ime.map fun f env d => f env (s.state d)
 
 end Widget.Spec
 
@@ -222,6 +228,7 @@ def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β whe
   mapChildren := w.mapChildren
   cursor := w.cursor
   heightFor := w.heightFor
+  ime := w.ime
 
 /-- A widget that only holds children: it draws nothing and asks for nothing itself. -/
 def Widget.container {Msg : Type} (kind : String) : Widget Msg :=

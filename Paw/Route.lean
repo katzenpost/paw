@@ -63,13 +63,15 @@ inductive InputKind where
   | key (k : Key) (m : Mods) (pressed : Bool)
   | text (s : String)
   | paste (s : String)
+  /-- Text an input method is composing, with its cursor in characters. -/
+  | preedit (s : String) (cursor : Nat)
   /-- The pointer left the window. -/
   | leaveWindow
   deriving Repr, DecidableEq, Inhabited
 
 /-- Keys, text and pastes: input from the keyboard. -/
 def InputKind.keyboard : InputKind → Bool
-  | .key .. | .text _ | .paste _ => true
+  | .key .. | .text _ | .paste _ | .preedit .. => true
   | _ => false
 
 /-- Input from the platform. -/
@@ -331,6 +333,8 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     ({ rt with consent := des.map (·.serial) }, [{ target := id, event := .key k m pressed, designation := des }])
   | .text s => (rt, textTarget.toList.map fun id => { target := id, event := .text s })
   | .paste s => (rt, textTarget.toList.map fun id => { target := id, event := .paste s })
+  | .preedit s c =>
+    (rt, textTarget.toList.map fun id => { target := id, event := .preedit (SafeText.filter s) c })
 
 /-- A press outside the open overlay goes to nothing but the overlay, as a dismissal. -/
 theorem press_outside {rt : Router} {tree : Node Msg} {i : Input} {p : Point} {b : MouseButton}

@@ -22,6 +22,7 @@ import Paw.Tests.Time
 import Paw.Tests.Style
 import Paw.Tests.Image
 import Paw.Tests.Wrap
+import Paw.Tests.Edit
 
 open Paw.Tests
 
@@ -45,5 +46,6 @@ def main : IO UInt32 := do
     ("time", Time.tests),
     ("style", Style.tests),
     ("image", Image.tests),
-    ("wrap", Wrap.tests)].mapM fun (n, t) => runSuite n t
+    ("wrap", Wrap.tests),
+    ("edit", Edit.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

@@ -59,6 +59,7 @@ def kindEnc : InputKind → List UInt8
   | .key k m pressed => nat.enc 4 ++ keyCodec.enc k ++ modsCodec.enc m ++ bool.enc pressed
   | .text s => nat.enc 5 ++ string.enc s
   | .paste s => nat.enc 6 ++ string.enc s
+  | .preedit s c => nat.enc 8 ++ string.enc s ++ nat.enc c
   | .leaveWindow => nat.enc 7
 
 def kindDec (bs : List UInt8) : Option (InputKind × List UInt8) := do
@@ -80,6 +81,7 @@ def kindDec (bs : List UInt8) : Option (InputKind × List UInt8) := do
   | 5 => let (s, bs) ← string.dec bs; pure (.text s, bs)
   | 6 => let (s, bs) ← string.dec bs; pure (.paste s, bs)
   | 7 => pure (.leaveWindow, bs)
+  | 8 => let (s, bs) ← string.dec bs; let (c, bs) ← nat.dec bs; pure (.preedit s c, bs)
   | _ => none
 
 theorem kind_roundtrip (k : InputKind) (rest : List UInt8) : kindDec (kindEnc k ++ rest) = some (k, rest) := by
@@ -150,6 +152,7 @@ def requestEnc : Request → Option (List UInt8)
   | .access focus nodes => some (nat.enc 5 ++ nat.enc focus ++ nat.enc nodes.length ++ nodes.flatMap accessNodeEnc)
   | .cursor c => some (nat.enc 6 ++ nat.enc (match c with
     | .default => 0 | .pointer => 1 | .text => 2 | .resizeH => 3 | .resizeV => 4))
+  | .ime area => some (nat.enc 7 ++ (Codec.option Scene.rectCodec).enc area)
 
 /-- Text measured by the Rust layer, with the fonts it draws with. -/
 def measure (style : TextStyle) (t : SafeText) : Int × Int :=

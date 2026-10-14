@@ -231,8 +231,8 @@ It applies them before producing the message, so that every app gets them withou
 **Input methods.** An input method sees what is typed.
 
 - Mark passphrase and key fields as such: on Wayland through text-input-v3, with content purpose `password` and hint `sensitive_data`; on Android with a password `inputType` and `IME_FLAG_NO_PERSONALIZED_LEARNING`.
-- Turn the input method off entirely for fields that do not need it.
-- Keep no undo history for secret fields.
+- Turn the input method off entirely for fields that do not need it, and while a secret field has focus: its candidate window and any learning it does would see the secret.
+- Keep no undo history for secret fields beyond the editing of them: hold it in the secret type, and drop it when the field loses focus.
 - Overwrite their buffers when the field is cleared or closed.
 
 **Accessibility.** An accessibility tree exposes everything it describes to assistive technology, and on Linux any process on the session bus can read it.

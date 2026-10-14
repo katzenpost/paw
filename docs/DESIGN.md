@@ -42,7 +42,7 @@ CryptWalker already relies on this. `NIKE` carries `commutes` and `derive_safe`,
 
 | Concern | Crate | Why |
 | --- | --- | --- |
-| Windows and input | winit 0.30, driven with `pump_app_events` | Lean owns the loop and polls, as monomer polls SDL; no Lean code runs inside a winit callback. winit picks Wayland or X11 at startup |
+| Windows and input | winit 0.30, driven with `pump_app_events`; its IME events for input methods | Lean owns the loop and polls, as monomer polls SDL; no Lean code runs inside a winit callback. winit picks Wayland or X11 at startup |
 | Drawing a Scene | tiny-skia, shown with softbuffer | Draws on the CPU, so the same scene gives the same pixels everywhere: golden images can be compared exactly, and no GPU is needed under Xvfb or a headless compositor |
 | Decoding images | image, with only its PNG and JPEG decoders | No SVG and no other formats, so that less code reads content from elsewhere |
 | Text shaping, measuring, drawing | cosmic-text, with DejaVu Sans bundled | Measuring and drawing use one font system, so text is drawn as wide as layout measured it. Offscreen renders use only the bundled fonts; a window adds the system's for characters they lack |
@@ -110,6 +110,8 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | A widget opens an overlay with the `SetOverlay` request and closes it with `ResetOverlay` | An overlay is a node of the view, marked with `Node.overlay`; it is open while the view has it | One direction for data to flow: the model says what is open |
 | The image widget reads files and fetches links itself | An app gets the bytes with a task and hands a decoded `Image` to the widget, which only shows it | Widgets do no IO; reading a file or the network is an effect the app's capabilities govern |
 | Images are cached by path or link | An image's pixels stay in Rust under an id from a counter, freed when Lean drops the `Image` | No content can collide a hash to draw as another image, and Lean's reference counting says exactly when the platform may let go |
+| A paragraph's height is guessed from the width it had in the last layout | A widget whose height depends on its width says so with `heightFor`, and the tree lays such a subtree out twice: for widths, then with the heights those widths give | Wrapped text is the right height in the first frame, and in every layout |
+| A text area breaks lines only at newlines | It wraps each line to its width, and Up and Down keep the caret's x across rows | Long lines of notes stay readable |
 | A theme is any record of colors and styles | A `Theme` carries `contrast_ok` and `focus_visible`, decided when it is written | Text is readable and focus can be seen in every state of every control; an unreadable theme does not compile |
 | `RenderEvery` and `RenderStop` requests start and stop a widget's timer, and while any runs, the loop draws 60 frames a second | A widget declares `every`, how often it wants `Event.tick`, as a function of its state; the loop sleeps until the next tick is due | A widget that leaves the tree or changes state stops ticking with nothing to undo; an idle app uses no CPU |
 | `alert` and `confirm` can be opened by any message, and their accept button acts on any click | A modal opens only with a `Modal` token made from the designation of the input being handled; `confirm`'s accept button acts only on a designated click | Dialogs come only from the user's actions, and ignore input until they are stable (guidelines, Input) |
@@ -227,6 +229,7 @@ The full `Widget` record also has monomer's merge, event and dispose functions. 
 | `Router` | `overlay_hit`: while an overlay is open, the pointer reaches only widgets in it; `press_outside`: a press outside it reaches nothing else | The user clicks what they see; a popup cannot steer a click to what it covers |
 | `Node` | `overlays_within`: overlays draw within the window; `Overlay.place_within` | Content cannot set its own position |
 | `Runtime` | `now_le_nextDeadline`: the loop never waits for a deadline already past | Timers fire when due |
+| `Wrap` | `wrap_fits`: every line fits its width, or is one character too wide for any; `wrap_flatten`: the lines put back together are the text | Text stays in its box; wrapping loses or adds nothing |
 | `Theme` | `contrast_ok`: all text at least 4.5:1 on what it is drawn on, in every state; control edges 3:1; `focus_visible`: a focus ring 2 pixels wide, 3:1 against the window | Focus is the user's, and the user can see where it is; text is readable |
 | `Node` | keys unique among siblings, by `dedupKeys_nodup` | State is never handed to another widget |
 
@@ -298,6 +301,30 @@ structure Theme extends ThemeData where
 The ratio needs relative luminance, which is defined with real numbers. Paw computes it exactly instead: a table holds each sRGB channel value's linear light in ten-millionths, luminance is a weighted sum of three entries, and the ratio (L₁ + 0.05) / (L₂ + 0.05) is compared with the threshold by cross-multiplying natural numbers. So `decide` checks a theme as it is written, and a theme with unreadable text or an invisible focus ring does not compile; `Tests/Rejects.lean` pins the error for each. Rounding in the table moves a ratio by far less than the threshold's precision.
 
 `Ui.themed theme child` gives a subtree a theme of its own, on that theme's background. The tree passes the nearest theme down as it measures, places, draws and delivers, and an overlay drawn apart from the tree takes the theme of its ancestors, so a popup in a dark part of the window is dark too. `PAW_THEME=dark` picks the theme the app starts with. A disabled node (`Ui.enabled false`) takes no input or focus and is drawn in its style's disabled look. The pointer takes the shape the widget under it names, such as the text cursor over a field, and the platform is asked only when that changes.
+
+### Text
+
+`Wrap.wrap` breaks a line of text into lines that fit a width, greedily, as a paragraph is laid out. The text is cut into pieces, each a word and the spaces after it, and a line takes pieces while it fits with the next at its end. The spaces at a line's end hang past its edge, as in a browser: they never push a word onto the next line, and they are still part of the text. So the lines put back together are the text exactly, which is a theorem rather than a test:
+
+```lean
+theorem Wrap.wrap_flatten (w : Int) (measure : List Char → Int) (cw : Char → Int) (cs : List Char) :
+    (wrap w measure cw cs).flatten = cs
+
+theorem Wrap.wrap_fits (w : Int) (measure : List Char → Int) (cw : Char → Int) (cs : List Char) :
+    ∀ l ∈ lines w measure cw cs, lineWidth Piece.core Piece.full l ≤ w ∨ ∃ p, l = [p] ∧ p.word.length ≤ 1
+```
+
+A word wider than the line is first cut into runs of characters that fit. Both laws come from one about packing anything greedily (`pack_fits`, `pack_flatten`), which wraps words into lines and characters into runs alike. Each distinct word is measured once per layout, and a run cut from a long word is measured by its characters. Drawing still draws each line as one run of text, clipped to the box, so a line whose shaped width differs from the sum of its words' widths by a pixel cannot draw outside it.
+
+A wrapped paragraph's height depends on the width it gets, which a size request made before layout cannot know. A widget whose height depends on its width says so with `heightFor`. `measure` marks every node that is, or holds in flow, such a widget, and `place` lays out the children of a marked node twice: once to learn each child's width, then with each wrapping child's height at that width. Nothing else pays for it. The layout laws keep their form, since a layout is still given a box and items. Monomer instead uses the width from the previous layout, which is wrong for the first frame and after every resize.
+
+Text blocks (`Ui.label`, `Ui.text`, `Ui.paragraph`) can wrap, show at most so many lines, and end with an ellipsis Paw draws (`TextOverflow`) rather than being cut at the edge. The ellipsis is drawn by Paw, so content cannot fake the end of a text.
+
+**Editing.** A text field and a text area edit through the same pure `Edit` functions: insertion, deletion, selection, moving by characters and by words (Ctrl-←/→, Ctrl-Backspace, Ctrl-Delete), and lines (Home and End). Ctrl-Z and Ctrl-Shift-Z undo and redo, up to 100 steps. A password field's history holds `Secret`s, and it is forgotten when the field loses focus, so no earlier secret outlives the editing of it.
+
+**Text areas.** A text area wraps each line to its width, so its text is shown as rows; by `wrap_flatten`, a position in the text is a row and a place in it. Up, Down, Page Up and Page Down keep the caret's x across rows of different lengths, and the area scrolls itself to keep the caret in view. Typing keeps newlines, and only in a text area. A text area keeps the rows of its text as last edited, with the text they were built from, and the wrapped rows of each line, so an edit wraps only the line it changed.
+
+**Input methods.** A widget that takes text an input method composes says where its caret is (`Widget.ime`), and the runtime tells the platform, which turns the input method on, and places its window by the caret, only while such a widget and the window have focus. Text being composed arrives as `InputKind.preedit` and is drawn underlined at the caret, not yet part of the value; what the input method commits arrives as text. A password field gives no caret, so the input method is off while it has focus: a candidate window or a learning input method would otherwise see the secret.
 
 ### Images
 

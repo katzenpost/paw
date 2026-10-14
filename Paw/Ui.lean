@@ -6,6 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 import Paw.Tree
 import Paw.Widgets.Basic
 import Paw.Widgets.TextField
+import Paw.Widgets.TextArea
 import Paw.Widgets.Scroll
 import Paw.Widgets.Overlay
 import Paw.Widgets.Anim
@@ -52,6 +53,11 @@ def checkbox (caption : String) (value : Bool) (onChange : Bool → Msg)
 def textField (value : String) (onChange : String → Msg) (cfg : TextFieldCfg := {})
     (key : Option String := none) : Node Msg :=
   Node.leaf (Widgets.textField value onChange cfg) key
+
+/-- Text of many lines, wrapped to the area's width. -/
+def textArea (value : String) (onChange : String → Msg) (cfg : TextAreaCfg := {})
+    (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.textArea value onChange cfg) key
 
 def passwordField (value : Secret) (onChange : Secret → Msg) (key : Option String := none) :
     Node Msg :=

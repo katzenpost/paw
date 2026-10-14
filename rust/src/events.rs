@@ -49,6 +49,8 @@ pub enum InputKind {
     Text(String),
     Paste(String),
     LeaveWindow,
+    /// Text an input method is composing, with its cursor in characters.
+    Preedit(String, u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +154,11 @@ fn put_input(w: &mut Writer, i: &Input) {
             w.string(s);
         }
         InputKind::LeaveWindow => w.nat(7),
+        InputKind::Preedit(s, c) => {
+            w.nat(8);
+            w.string(s);
+            w.nat(*c);
+        }
     }
     w.nat(i.time);
     w.bool(i.synthetic);
@@ -219,6 +226,8 @@ pub enum Request {
     Access(u64, Vec<AccessNode>),
     /// The pointer's shape: 0 default, 1 pointer, 2 text, 3 horizontal resize, 4 vertical resize.
     Cursor(u64),
+    /// An input method allowed, with the caret's rectangle, or not.
+    Ime(Option<crate::scene::Rect>),
 }
 
 fn access_node(r: &mut Reader) -> Option<AccessNode> {
@@ -284,6 +293,11 @@ impl Request {
                 c @ 0..=4 => Request::Cursor(c),
                 _ => return None,
             },
+            7 => Request::Ime(if r.bool()? {
+                Some(crate::scene::Rect { x0: r.int()?, y0: r.int()?, x1: r.int()?, y1: r.int()? })
+            } else {
+                None
+            }),
             _ => return None,
         };
         r.is_empty().then_some(req)
@@ -322,6 +336,16 @@ impl Request {
                 w.nat(6);
                 w.nat(*c);
             }
+            Request::Ime(area) => {
+                w.nat(7);
+                w.bool(area.is_some());
+                if let Some(r) = area {
+                    w.int(r.x0);
+                    w.int(r.y0);
+                    w.int(r.x1);
+                    w.int(r.y1);
+                }
+            }
         }
         w.bytes
     }
@@ -346,6 +370,7 @@ pub fn sample() -> Vec<WindowEvent> {
         WindowEvent::Access(7, 1),
         WindowEvent::Focus(false),
         WindowEvent::Visible(true),
+        input(InputKind::Preedit("日本".into(), 1), 11),
     ]
 }
 
@@ -362,6 +387,8 @@ mod tests {
             Request::Notify("a".into(), "b".into()),
             Request::Quit,
             Request::Cursor(2),
+            Request::Ime(None),
+            Request::Ime(Some(crate::scene::Rect { x0: 1, y0: -2, x1: 3, y1: 4 })),
             Request::Access(
                 2,
                 vec![AccessNode {
@@ -386,7 +413,7 @@ mod tests {
     #[test]
     fn events_encode() {
         let bytes = encode_events(&sample());
-        assert_eq!(bytes[0], 15);
+        assert_eq!(bytes[0], 16);
         assert_eq!(encode_events(&[WindowEvent::Focus(false), WindowEvent::Visible(true)]), [2, 4, 0, 5, 1]);
         assert_eq!(encode_events(&[WindowEvent::Close]), [1, 2]);
         assert_eq!(encode_events(&[WindowEvent::Resize(1, -1)]), [1, 1, 2, 1]);

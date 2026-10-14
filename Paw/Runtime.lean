@@ -54,6 +54,8 @@ inductive WindowEvent where
 inductive Request where
   /-- The pointer's shape over the window. -/
   | cursor (c : Cursor)
+  /-- An input method allowed, with the caret's rectangle to place its window by, or not. -/
+  | ime (area : Option Rect)
   | present (s : Scene)
   | setTitle (t : SafeName)
   | setClipboard (t : SafeText)
@@ -92,6 +94,8 @@ structure Runtime {caps : List Cap} (app : App caps) where
   theme : Theme := Theme.light
   /-- The pointer's shape the platform was last asked for. -/
   cursor : Cursor := .default
+  /-- What the platform was last told of input methods. -/
+  ime : Option Rect := none
   quit : Bool := false
   /-- `update` has run since the last settle, so the model may have changed. -/
   updated : Bool := false
@@ -232,6 +236,14 @@ def pointCursor (rt : Runtime app) (outs : List (Output app.Msg)) : Runtime app 
     | none => .default
   if c == rt.cursor then (rt, outs) else ({ rt with cursor := c }, outs ++ [.request (.cursor c)])
 
+/-- The platform told whether the focused widget takes composed text, and where its caret is, if
+that changed: an input method is on only while such a widget has focus and the window does. -/
+def pointIme (rt : Runtime app) (outs : List (Output app.Msg)) : Runtime app × List (Output app.Msg) :=
+  let area := if !rt.windowFocused then none else
+    (rt.router.focused.bind (rt.router.paths[·]?)).bind fun p =>
+      (rt.tree.get? p).bind (·.imeArea (rt.tree.envAlong rt.env p))
+  if area == rt.ime then (rt, outs) else ({ rt with ime := area }, outs ++ [.request (.ime area)])
+
 /-- Input from the platform: routed, delivered, and settled. -/
 def stepInput (rt : Runtime app) (i : Input) : Runtime app × List (Output app.Msg) :=
   let before := rt.model
@@ -242,7 +254,8 @@ def stepInput (rt : Runtime app) (i : Input) : Runtime app × List (Output app.M
     (fun (rt, outs, h) d => let (rt, o, h') := rt.deliver d; (rt, outs ++ o, h || h'))
     ({ rt with router }, [], false)
   let (rt, outs) := rt.settle before (moved || handled) outs (access := focusMoved || handled)
-  rt.pointCursor outs
+  let (rt, outs) := rt.pointCursor outs
+  rt.pointIme outs
 
 /-- One event from the window. -/
 def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List (Output app.Msg) :=
@@ -253,7 +266,7 @@ def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List
     if i.kind.keyboard && !rt.windowFocused then (rt, []) else rt.stepInput i
   | .focus has =>
     let rt := { rt with windowFocused := has }.layout
-    (rt, rt.frame)
+    rt.pointIme rt.frame
   | .visible seen =>
     let rt := { rt with windowVisible := seen }.layout
     (rt, if seen then rt.frame else [])

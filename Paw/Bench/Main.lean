@@ -211,7 +211,7 @@ def overlayBenches : IO (Array LeanBench.Bench) := do
     { name := "overlay render overlays 1000", config := cfg "overlay"
       action := do
         let (r, t) := (← rt.get, ← t.get)
-        scene.set (Node.renderOverlays env win (r.shown.toList.filterMap fun (_, p, _) => t.get? p)) }]
+        scene.set (Node.renderOverlays win (r.shown.toList.filterMap fun (_, p, _) => (t.get? p).map (env, ·))) }]
 
 /-- The list, fading in over a second. -/
 def fadingApp : App [] := { app with view := fun m => Ui.fadeIn (view m) 1000 }
@@ -232,6 +232,35 @@ def timeBenches : IO (Array LeanBench.Bench) := do
   return #[
     mkBench "time next deadline, idle, 1000 rows" "time" idle deadline (·.nextDeadline),
     mkBench "time 60 frames of a fade, 1000 rows" "time" fading out frames (samples := 10)]
+
+/-- Ten thousand words, as one paragraph. -/
+def tenThousandWords : String :=
+  String.intercalate " " ((List.range 10000).map fun i => s!"word{i % 997}")
+
+/-- A thousand lines in a text area 400 pixels wide, focused, with the caret at the end. -/
+def notesApp : App [] :=
+  { Model := String, Msg := String, init := String.intercalate "\n" ((List.range 1000).map fun i =>
+      s!"line {i} of notes, long enough that some of them will have to wrap in a narrow area"),
+    update := fun _ s => modify fun (_, cs) => (s, cs),
+    view := fun s => Ui.col [Ui.row [Ui.width (px 400) (Ui.height (px 400) (Ui.textArea s id {} "notes"))]] }
+
+def wrapBenches : IO (Array LeanBench.Bench) := do
+  let env : Env := { measure }
+  let words ← IO.mkRef tenThousandWords
+  let wrapped ← IO.mkRef ([] : List SafeText)
+  let notes := (Paw.Runtime.start notesApp (Rect.ofXYWH 0 0 (px 800) (px 600)) 0 measure).1
+  let at_ := center notes "notes"
+  let notes := (notes.step (.input { kind := .press at_ .primary, time := 1000 }) 1000).1
+  let notes := (notes.step (.input { kind := .release at_ .primary, time := 1010 }) 1010).1
+  let rt ← IO.mkRef notes
+  let out ← IO.mkRef notes
+  let scene ← IO.mkRef Scene.empty
+  return #[
+    mkBench "wrap 10000 words at 400 pixels" "wrap" words wrapped fun s =>
+      ({ wrap := true } : Widgets.TextCfg).layout env {} (px 400) [SafeText.trusted s],
+    mkBench "wrap text area of 1000 lines: draw" "wrap" rt scene fun rt => rt.tree.render rt.env,
+    mkBench "wrap text area of 1000 lines: type a character" "wrap" rt out (samples := 20) fun rt =>
+      (rt.step (.input { kind := .text "x", time := 2000 }) 2000).1]
 
 def runtimeBenches : IO (Array LeanBench.Bench) := do
   let r10 ← IO.mkRef (runtime 10)
@@ -259,7 +288,7 @@ end Paw.Bench
 
 open Paw.Bench in
 def main (args : List String) : IO UInt32 := do
-  for suite in [textBenches, codecBenches, layoutBenches, treeBenches, routeBenches, overlayBenches, timeBenches, runtimeBenches,
+  for suite in [textBenches, codecBenches, layoutBenches, treeBenches, routeBenches, overlayBenches, timeBenches, wrapBenches, runtimeBenches,
       platformBenches] do
     (← suite).forM LeanBench.register
   LeanBench.runMain args

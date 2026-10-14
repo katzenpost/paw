@@ -48,6 +48,14 @@ def click (rt : Runtime GApp) (k : String) (t : Nat) : Runtime GApp :=
 def gallery : Runtime GApp :=
   (Paw.Runtime.start GApp (Rect.ofXYWH 0 0 (px 640) (px 560)) 0 Linux.measure (motion := false)).1
 
+/-- The gallery with notes of several lines, one long enough to wrap, and the caret in them. -/
+def galleryNotes : Runtime GApp := Id.run do
+  let mut rt := click gallery "notes" 1000
+  rt := step rt (.text "Lines end where the user pressed Enter, and also where the area is too narrow for the words, which wrap.") 1600
+  rt := step rt (.key .enter {} true) 1700
+  rt := step rt (.text "Second line") 1800
+  return rt
+
 /-- The gallery switched to the dark theme. -/
 def galleryDark : Runtime GApp := click gallery "dark" 1000
 
@@ -112,6 +120,7 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
   ("confirm", sceneOf galleryConfirm, 640, 560, 1000),
   ("tooltip", sceneOf galleryTip, 640, 560, 1000),
   ("gallery-dark", sceneOf galleryDark, 640, 560, 1000),
+  ("textarea", sceneOf galleryNotes, 640, 560, 1000),
   ("gallery-fading", sceneOf galleryFading, 640, 560, 1000),
   ("button", draw oneButton 140 50, 140, 50, 1000),
   ("button-hovered", draw oneButton 140 50 { env with hovered := some buttonId }, 140, 50, 1000),

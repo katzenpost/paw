@@ -11,7 +11,7 @@ Every widget Paw has, in one window: a counter, a form with a password, a checkb
 rows keep their state as it changes, a scrolled text, two effects that need the user's choice:
 opening a link and copying, a menu in a popup that opens an alert and a confirmation, a tooltip,
 rows that fade in, a button disabled until it has something to do, a switch to the dark
-theme, icons, and a picture made by a task. -/
+theme, icons, a picture made by a task, and notes of many lines. -/
 
 namespace Gallery
 
@@ -38,6 +38,7 @@ inductive Msg where
   | keep
   | dark (on : Bool)
   | loadPicture
+  | notes (s : String)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -54,11 +55,12 @@ structure Model where
   clearing : Option Modal := none
   dark : Bool := false
   picture : Option Image := none
+  notes : String := ""
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
     a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened &&
-    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture
+    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture && a.notes == b.notes
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -108,6 +110,7 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .dark on => modify fun (m, cs) => ({ m with dark := on }, cs)
   | _, .loadPicture => emit (.task (.picture <$> sunset) (by decide))
   | _, .picture r => modify fun (m, cs) => ({ m with picture := r.toOption }, cs)
+  | _, .notes s => modify fun (m, cs) => ({ m with notes := s }, cs)
 
 def view (m : Model) : Node Msg :=
   Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
@@ -130,7 +133,8 @@ def view (m : Model) : Node Msg :=
       (m.picture.toList.map fun img =>
         Ui.width (px 56) (Ui.height (px 28) (Ui.image img (.text (SafeName.filter "A sunset")) .fill "picture")))),
     Ui.row [Ui.button "Open link" .openLink "link", Ui.button "Copy name" .copyName "copy",
-      Ui.label s!"links opened: {m.opened}" "opened"]] ++
+      Ui.label s!"links opened: {m.opened}" "opened"],
+    Ui.textArea m.notes .notes { rows := 3, placeholder := SafeText.trusted "notes" } "notes"] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")

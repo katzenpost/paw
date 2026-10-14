@@ -1,0 +1,3 @@
+#!/bin/sh
+# Records the link it was asked to open, in place of opening it.
+printf '%s\n' "$@" >> "$PAW_E2E_OPENED"

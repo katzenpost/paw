@@ -17,6 +17,7 @@ import Paw.Widgets.Slider
 import Paw.Widgets.List
 import Paw.Widgets.Split
 import Paw.Widgets.Link
+import Paw.Widgets.Drag
 import Paw.Cmd
 
 /-! # Building views
@@ -303,3 +304,12 @@ def confirm (m : Modal) (title : SafeName) (body : String) (onAccept onCancel : 
 its scheme and host, is shown in a tooltip on hover and focus, whatever the caption says. -/
 def externalLink (caption : SafeText) (link : Link) (onOpen : Msg) (key : String) : Node Msg :=
   tooltip (Uri.destination link.uri) (Node.leaf (Widgets.link caption (SafeText.filter link.uri) onOpen) key)
+
+/-- `child`, which can be dragged, giving `payload` to a drop target. -/
+def draggable {α : Type} [TypeName α] (payload : α) (child : Node Msg) (key : Option String := none) : Node Msg :=
+  Node.containerWith (Widgets.draggable payload) (box { expand := true }) [child] key
+
+/-- `child`, on which values of type `α` can be dropped, each asking for `accept`. -/
+def dropTarget {α : Type} [TypeName α] (accept : α → Msg) (child : Node Msg) (key : Option String := none) :
+    Node Msg :=
+  Node.containerWith (Widgets.dropTarget accept) (box { expand := true }) [child] key

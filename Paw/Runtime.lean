@@ -116,7 +116,8 @@ variable {caps : List Cap} {app : App caps}
 def env (rt : Runtime app) : Env :=
   { measure := rt.measure, now := rt.now, theme := rt.theme, focused := rt.router.focused,
     hovered := rt.router.hovered, pressed := rt.router.pressed, window := rt.window,
-    windowFocused := rt.windowFocused, motion := rt.motion }
+    windowFocused := rt.windowFocused, motion := rt.motion,
+    dragAt := (rt.router.drag.filter (·.active)).map (·.at_) }
 
 /-- The tree placed in the window, and the router told where everything is. -/
 def layout (rt : Runtime app) : Runtime app :=
@@ -134,10 +135,19 @@ def overlayScene (rt : Runtime app) : Scene :=
   Node.renderOverlays rt.window (rt.visibleOverlays.filterMap fun (_, p) =>
     (rt.tree.get? p).map (rt.tree.envAlong rt.env p, ·))
 
-/-- The window's background, then the tree, then its open overlays. -/
+/-- While something is dragged: a faint copy of it, following the pointer, within the window. -/
+def dragScene (rt : Runtime app) : Scene :=
+  match rt.router.drag.filter (·.active) with
+  | some d => match (rt.router.paths[d.source]?).bind fun p => (rt.tree.get? p).map (p, ·) with
+    | some (p, n) =>
+      (((n.render (rt.tree.envAlong rt.env p)).translate ⟨d.at_.x - d.start.x, d.at_.y - d.start.y⟩).withAlpha 140).clip rt.window
+    | none => Scene.empty
+  | none => Scene.empty
+
+/-- The window's background, then the tree, then its open overlays, then what is being dragged. -/
 def present (rt : Runtime app) : Output app.Msg :=
   .request (.present (Scene.inBox rt.window [.fill rt.window rt.theme.background 0] ++
-    rt.tree.render rt.env ++ rt.overlayScene))
+    rt.tree.render rt.env ++ rt.overlayScene ++ rt.dragScene))
 
 /-- The tree as assistive technology sees it. -/
 def accessOut (rt : Runtime app) : Output app.Msg :=
@@ -178,11 +188,18 @@ def applyReqs (rt : Runtime app) (o : Origin) (reqs : List (Req app.Msg)) :
 
 /-- `d` to its widget: the runtime after, the outputs, and whether any widget handled it. -/
 def deliver (rt : Runtime app) (d : Delivery) : Runtime app × List (Output app.Msg) × Bool :=
+  -- A drop is delivered with what was dragged.
+  let env := match d.event with
+    | .drop _ =>
+      let payload := (rt.router.dropped.bind (rt.router.paths[·]?)).bind fun p =>
+        (rt.tree.get? p).bind fun n => (n.state? DragPayload).map (·.payload)
+      { rt.env with dragged := payload }
+    | _ => rt.env
   let (tree, reqs) := match rt.router.paths[d.target]? with
-    | some path => match rt.tree.bubbleAt rt.env d.event path with
+    | some path => match rt.tree.bubbleAt env d.event path with
       | some (tree, reqs) => (tree, some reqs)
       | none => (rt.tree, none)
-    | none => rt.tree.bubble rt.env d.target d.event
+    | none => rt.tree.bubble env d.target d.event
   let o : Origin := match d.designation with | some des => .user des | none => .other
   let (rt, outs) := { rt with tree }.applyReqs o (reqs.getD [])
   (rt, outs, reqs.isSome)
@@ -252,7 +269,8 @@ def stepInput (rt : Runtime app) (i : Input) : Runtime app × List (Output app.M
   let before := rt.model
   let (router, ds) := rt.router.route rt.tree i
   let focusMoved := router.focused != rt.router.focused
-  let moved := focusMoved || router.hovered != rt.router.hovered || router.pressed != rt.router.pressed
+  let moved := focusMoved || router.hovered != rt.router.hovered || router.pressed != rt.router.pressed ||
+    router.drag != rt.router.drag
   let (rt, outs, handled) := ds.foldl
     (fun (rt, outs, h) d => let (rt, o, h') := rt.deliver d; (rt, outs ++ o, h || h'))
     ({ rt with router }, [], false)

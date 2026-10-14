@@ -65,6 +65,8 @@ inductive Event where
   | tick (now : Nat)
   /-- A press outside the open overlay this widget is: the user dismissed it. -/
   | dismiss
+  /-- What was dragged is dropped here, at the point; `Env.dragged` holds it. -/
+  | drop (p : Point)
   deriving Repr, DecidableEq, Inhabited
 
 end Paw

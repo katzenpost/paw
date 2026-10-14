@@ -50,6 +50,10 @@ structure Env where
   windowFocused : Bool := true
   /-- Animations run; false when the user asked for reduced motion, and they jump to their end. -/
   motion : Bool := true
+  /-- Where the pointer is while something is being dragged. -/
+  dragAt : Option Point := none
+  /-- What is being dropped, while a drop is delivered. -/
+  dragged : Option Dynamic := none
 
 /-- Text measured as monomer's tests measure it: 10 pixels a character, 20 pixels a line. -/
 def Env.mock : Env := { measure := fun _ t => (px (t.text.length * 10), px 20) }

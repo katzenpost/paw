@@ -32,5 +32,6 @@ import Paw.Widgets.Slider
 import Paw.Widgets.List
 import Paw.Widgets.Split
 import Paw.Widgets.Link
+import Paw.Widgets.Drag
 import Paw.Ui
 import Paw.Linux

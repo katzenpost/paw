@@ -56,6 +56,12 @@ def galleryNotes : Runtime GApp := Id.run do
   rt := step rt (.text "Second line") 1800
   return rt
 
+/-- The gallery's Drag page with a task dragged over the Done column. -/
+def galleryDragging : Runtime GApp :=
+  let rt := click gallery "tab-Drag" 1000
+  let a := at_ rt "Test it"
+  step (step (step rt (.press a .primary) 2000) (.move ⟨a.x + px 10, a.y⟩) 2050) (.move (at_ rt "done")) 2100
+
 /-- The gallery switched to the dark theme. -/
 def galleryDark : Runtime GApp := click gallery "dark" 1000
 
@@ -124,6 +130,7 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
       (.key (.char 'a') { ctrl := true } true) 2100) (.text "4x") 2200), 640, 560, 1000),
   ("dropdown-open", sceneOf (click (click gallery "tab-Lists" 1000) "country" 2000), 640, 560, 1000),
   ("gallery-layout", sceneOf (step (click gallery "tab-Layout" 1000) (.wheel ⟨px 400, px 200⟩ 2 3) 2000), 640, 560, 1000),
+  ("dragging", sceneOf galleryDragging, 640, 560, 1000),
   ("gallery-choices", sceneOf (click (click gallery "tab-Choices" 1000) "large" 2000), 640, 560, 1000),
   ("textarea", sceneOf galleryNotes, 640, 560, 1000),
   ("gallery-fading", sceneOf galleryFading, 640, 560, 1000),

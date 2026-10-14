@@ -56,7 +56,7 @@ def targets (ds : List Delivery) : List (Nat × String) :=
     | .press .. => "press" | .release .. => "release" | .click _ _ n => s!"click{n}"
     | .move _ => "move" | .enter _ => "enter" | .leave _ => "leave" | .focus => "focus"
     | .blur => "blur" | .key .. => "key" | .text _ => "text" | .paste _ => "paste"
-    | .wheel .. => "wheel" | .tick _ => "tick" | .dismiss => "dismiss" | .preedit .. => "preedit")
+    | .wheel .. => "wheel" | .tick _ => "tick" | .dismiss => "dismiss" | .preedit .. => "preedit" | .drop _ => "drop")
 
 def clicks (ds : List Delivery) : List Delivery :=
   ds.filter fun d => match d.event with | .click .. => true | _ => false

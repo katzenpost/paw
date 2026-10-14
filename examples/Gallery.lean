@@ -24,6 +24,7 @@ inductive Page where
   | inputs
   | lists
   | layout
+  | drag
   deriving Repr, BEq, Inhabited
 
 def fruits : List String :=
@@ -87,6 +88,8 @@ inductive Msg where
   | color (c : String)
   | colorOpen (b : Bool)
   | share (r : Nat)
+  | finish (task : String)
+  | reopen (task : String)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -121,6 +124,8 @@ structure Model where
   color : String := "green"
   colorOpen : Bool := false
   share : Nat := 350
+  todo : List String := ["Write the plan", "Test it", "Ship it"]
+  done : List String := []
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
@@ -129,7 +134,7 @@ instance : BEq Model where
     a.align == b.align && a.bold == b.bold && a.quantity.val == b.quantity.val && a.price.val == b.price.val &&
     a.date == b.date && a.time == b.time && a.volume.val == b.volume.val && a.treble.val == b.treble.val &&
     a.bass.val == b.bass.val && a.fruit == b.fruit && a.country == b.country && a.countryOpen == b.countryOpen &&
-    a.color == b.color && a.colorOpen == b.colorOpen && a.share == b.share
+    a.color == b.color && a.colorOpen == b.colorOpen && a.share == b.share && a.todo == b.todo && a.done == b.done
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -201,6 +206,10 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .color c => modify fun (m, cs) => ({ m with color := c }, cs)
   | _, .colorOpen b => modify fun (m, cs) => ({ m with colorOpen := b }, cs)
   | _, .share r => modify fun (m, cs) => ({ m with share := r }, cs)
+  | _, .finish t => modify fun (m, cs) =>
+    if m.todo.contains t then ({ m with todo := m.todo.erase t, done := m.done ++ [t] }, cs) else (m, cs)
+  | _, .reopen t => modify fun (m, cs) =>
+    if m.done.contains t then ({ m with done := m.done.erase t, todo := m.todo ++ [t] }, cs) else (m, cs)
 
 /-- Radio buttons, option buttons, a toggle button and separators. -/
 def choicesPage (m : Model) : Node Msg :=
@@ -249,6 +258,14 @@ def layoutPage (m : Model) : Node Msg :=
     (Ui.scroll (Ui.col ((List.range 30).map fun r => Ui.row ((List.range 16).map (cell r)))) "grid" .both)
     m.share .share (key := "split")
 
+/-- Tasks dragged between two columns. -/
+def dragPage (m : Model) : Node Msg :=
+  let column (title key : String) (tasks : List String) (accept : String → Msg) : Node Msg :=
+    Ui.width (px 220) <| Ui.height (px 240) <| Ui.dropTarget accept (key := key) <| Ui.pad (px 8) <|
+      Ui.col ([Ui.label title (key := s!"{key}Title")] ++ tasks.map fun t =>
+        Ui.draggable t (Ui.button t .inc) (key := t)) (px 6)
+  Ui.row [column "To do" "todo" m.todo .reopen, column "Done" "done" m.done .finish] (px 16)
+
 /-- The first page: what the gallery had before it had tabs. -/
 def basicsPage (m : Model) : Node Msg :=
   Ui.col [
@@ -279,7 +296,7 @@ def view (m : Model) : Node Msg :=
   Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
     Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m),
       ("Inputs", .inputs, inputsPage m), ("Lists", .lists, listsPage m),
-      ("Layout", .layout, layoutPage m)]] ++
+      ("Layout", .layout, layoutPage m), ("Drag", .drag, dragPage m)]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")

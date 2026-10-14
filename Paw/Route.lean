@@ -92,6 +92,23 @@ structure Delivery where
   designation : Option Designation := none
   deriving Repr, DecidableEq
 
+/-- What a draggable widget keeps: the value it gives a drop. -/
+structure DragPayload where
+  payload : Dynamic
+  deriving TypeName
+
+/-- A drag: the widget dragged from, where the press was, where the pointer is, and whether it has
+moved far enough to be a drag rather than a click. -/
+structure Drag where
+  source : WidgetId
+  start : Point
+  at_ : Point
+  active : Bool := false
+  deriving Repr, DecidableEq
+
+/-- How far the pointer moves, in units, before a press on something draggable is a drag. -/
+def dragDistance : Int := px 4
+
 structure Router where
   focused : Option WidgetId := none
   /-- When focus last moved. -/
@@ -122,6 +139,10 @@ structure Router where
   hoverSince : Nat := 0
   /-- How long the pointer rests on something before its tooltip shows. -/
   tipMs : Nat := 1000
+  /-- A press on something draggable, and the drag it may become. -/
+  drag : Option Drag := none
+  /-- What the last input dropped: the widget it was dragged from. -/
+  dropped : Option WidgetId := none
   /-- Inputs routed so far. -/
   serial : Nat := 0
   stableMs : Nat := 500
@@ -202,6 +223,11 @@ def trapped (rt : Router) (id : WidgetId) : Bool :=
     | some po, some pi => po.isPrefixOf pi
     | _, _ => false
 
+/-- The node with `id`, or the nearest around it, whose widget is of `kind`. -/
+def around (rt : Router) (tree : Node Msg) (id : WidgetId) (kind : String) : Option (Node Msg) :=
+  (rt.paths[id]?).bind fun path =>
+    (List.range (path.length + 1)).reverse.findSome? fun k => (tree.get? (path.take k)).filter (·.kind == kind)
+
 /-- The topmost visible node at `p`: in the topmost overlay if one is open, else in the tree. -/
 def hitAt (rt : Router) (tree : Node Msg) (p : Point) : Option (Node Msg) :=
   match rt.overlay with
@@ -275,7 +301,7 @@ def hover (rt : Router) (to : Option WidgetId) (p : Point) (now : Nat) : Router 
 /-- Routes one input through `tree`: the router after it, and the events it gives widgets. -/
 def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery :=
   let serial := rt.serial
-  let rt := { rt with serial := rt.serial + 1, consent := none }
+  let rt := { rt with serial := rt.serial + 1, consent := none, dropped := none }
   let at? (p : Point) := (rt.hitAt tree p).filter (·.enabled)
   -- Where keys go: the focused widget, unless a modal is open and focus is outside it, when they go
   -- to the modal; Escape goes to the topmost overlay unless focus is in it.
@@ -293,15 +319,27 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     match at? p with
     | some n =>
       let (rt, focus) := if n.focusable then rt.moveFocus (some n.id) i.time else (rt, [])
-      ({ rt with pressed := some n.id }, focus ++ [{ target := n.id, event := .press p b }])
+      let drag := if b == .primary then (rt.around tree n.id "draggable").map fun s => { source := s.id, start := p, at_ := p }
+        else none
+      ({ rt with pressed := some n.id, drag }, focus ++ [{ target := n.id, event := .press p b }])
     | none =>
-      ({ rt with pressed := none }, rt.overlay.toList.map fun (o, _) => { target := o, event := .dismiss })
+      ({ rt with pressed := none, drag := none }, rt.overlay.toList.map fun (o, _) => { target := o, event := .dismiss })
   | .release p b =>
     match rt.pressed with
     | some id =>
       let rel : Delivery := { target := id, event := .release p b }
-      let rt := { rt with pressed := none }
-      if let some n := (at? p).filter (·.id == id) then
+      let drag := rt.drag
+      let rt := { rt with pressed := none, drag := none }
+      -- A drag ends in a drop on the target under the pointer, which the user chose as they would
+      -- by clicking it: designated only if the checks pass. It is not also a click.
+      if let some d := drag.filter (·.active) then
+        match (at? p).bind fun n => rt.around tree n.id "dropTarget" with
+        | some t =>
+          let des := rt.designate serial i t.id t.key false
+          ({ rt with dropped := some d.source, consent := des.map (·.serial) },
+            [rel, { target := t.id, event := .drop p, designation := des }])
+        | none => (rt, [rel])
+      else if let some n := (at? p).filter (·.id == id) then
         let count := match rt.lastClick with
           | some (last, t, c) => if last == id && i.time ≤ t + rt.doubleClickMs then c + 1 else 1
           | none => 1
@@ -312,6 +350,9 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     | none => (rt, [])
   | .move p =>
     let target := (at? p).map (·.id)
+    let moved (d : Drag) : Drag :=
+      { d with at_ := p, active := d.active || (p.x - d.start.x).natAbs + (p.y - d.start.y).natAbs > dragDistance.natAbs }
+    let rt := { rt with drag := rt.drag.map moved }
     let (rt, hov) := rt.hover target p i.time
     let moveTo := rt.pressed.orElse fun _ => target
     (rt, hov ++ moveTo.toList.map fun id => { target := id, event := .move p })
@@ -320,6 +361,13 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     (rt, hov)
   | .wheel p dx dy =>
     (rt, ((at? p).map (·.id)).toList.map fun id => { target := id, event := .wheel p dx dy })
+  -- Escape during a drag cancels it, and goes nowhere else.
+  | .key .escape m true =>
+    if rt.drag.any (·.active) then ({ rt with drag := none }, [])
+    else
+      let id := (keyTarget .escape).getD tree.id
+      let des := rt.designate serial i id ((tree.find? id).bind (·.key)) true
+      ({ rt with consent := des.map (·.serial) }, [{ target := id, event := .key .escape m true, designation := des }])
   | .key .tab m true =>
     let order := match rt.overlay with
       | some _ => ((rt.overlayNode tree).map (·.focusables)).getD []
@@ -341,7 +389,8 @@ theorem press_outside {rt : Router} {tree : Node Msg} {i : Input} {p : Point} {b
     {o : WidgetId} {k : Overlay} (hk : i.kind = .press p b) (ho : rt.overlay = some (o, k))
     (hm : (rt.hitAt tree p).filter (·.enabled) = none) :
     (rt.route tree i).2 = [{ target := o, event := .dismiss }] := by
-  have : ({ rt with serial := rt.serial + 1, consent := none } : Router).hitAt tree p = rt.hitAt tree p := rfl
+  have : ({ rt with serial := rt.serial + 1, consent := none, dropped := none } : Router).hitAt tree p =
+    rt.hitAt tree p := rfl
   simp only [route, hk, this, hm]
   simp [ho]
 

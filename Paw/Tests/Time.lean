@@ -167,6 +167,7 @@ def tests : TestM Unit := do
   let idle := startOf fieldView
   checkEq "an idle app waits for the platform with no timeout" none (idle.waitFor 0 false)
   checkEq "with a task running, 16 ms" (some 16) (idle.waitFor 0 true)
+  checkEq "unless the platform is woken when it finishes" none (idle.waitFor 0 true (wakes := true))
   let ticking := startOf tickerView
   checkEq "until the next tick" (some 70) (ticking.waitFor 30 false)
   checkEq "or 16 ms with a task running" (some 16) (ticking.waitFor 30 true)

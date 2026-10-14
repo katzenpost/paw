@@ -36,8 +36,15 @@ def click (rt : Runtime App) (k : String) (t : Nat) : Runtime App × List (Outpu
 def requests (outs : List (Output _root_.Gallery.Msg)) : List Request :=
   outs.filterMap fun | .request r => some r | _ => none
 
+def producers (outs : List (Output _root_.Gallery.Msg)) : Nat :=
+  (outs.filter fun | .producer _ => true | _ => false).length
+
 def tests : TestM Unit := do
   let rt := begin
+  let (clocked, outs) := rt.results [.startClock] 500
+  checkEq "starting the clock starts a producer" 1 (producers outs)
+  checkEq "once" 0 (producers (clocked.results [.startClock] 600).2)
+  checkEq "whose ticks are counted" 2 ((clocked.results [.tick, .tick] 700).1.model.ticks)
   check "the gallery draws within its window" (decide ((rt.tree.render rt.env).Within rt.window))
   let (rt, _) := click rt "inc" 1000
   let (rt, _) := click rt "inc" 1500

@@ -109,6 +109,10 @@ inductive Cmd (Msg : Type) (caps : List Cap) : Origin → Type where
       (designated : e.DesignatedBy d) : Cmd Msg caps (.user d)
   /-- Runs `io` and gives its result to `update` as a message of origin `other`. -/
   | task {o : Origin} (io : IO Msg) (granted : Cap.io ∈ caps) : Cmd Msg caps o
+  /-- Runs `run` on a thread of its own, giving it a function that sends a message to `update`,
+  with origin `other`, as often as it likes, from any thread, until `run` returns. -/
+  | producer {o : Origin} (run : (Msg → IO Unit) → IO Unit) (granted : Cap.io ∈ caps) :
+      Cmd Msg caps o
   | notify {o : Origin} (title : SafeName) (body : SafeText) (granted : Cap.notify ∈ caps) :
       Cmd Msg caps o
   | setTitle {o : Origin} (title : SafeName) : Cmd Msg caps o
@@ -132,6 +136,7 @@ theorem other_no_authority (cmd : Cmd Msg caps .other) : cmd.usesAuthority = fal
 def mapMsg {β : Type} (f : Msg → β) : Cmd Msg caps o → Cmd β caps o
   | .effect d e g h => .effect d e g h
   | .task io g => .task (f <$> io) g
+  | .producer run g => .producer (fun send => run (send ∘ f)) g
   | .notify t b g => .notify t b g
   | .setTitle t => .setTitle t
   | .quit => .quit
@@ -141,6 +146,7 @@ def mapMsg {β : Type} (f : Msg → β) : Cmd Msg caps o → Cmd β caps o
 def lift {caps' : List Cap} (sub : caps ⊆ caps') : Cmd Msg caps o → Cmd Msg caps' o
   | .effect d e g h => .effect d e (sub g) h
   | .task io g => .task io (sub g)
+  | .producer run g => .producer run (sub g)
   | .notify t b g => .notify t b (sub g)
   | .setTitle t => .setTitle t
   | .quit => .quit

@@ -96,6 +96,8 @@ inductive Msg where
   | inkOpen (b : Bool)
   | preview (dark : Bool)
   | picture (img : Except ImageError Image)
+  | startClock
+  | tick
 
 structure Model where
   count : Int := 0
@@ -135,6 +137,8 @@ structure Model where
   ink : Color := Color.rgba 0xC0 0x30 0x60 200
   inkOpen : Bool := false
   previewDark : Bool := true
+  clock : Bool := false
+  ticks : Nat := 0
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
@@ -144,7 +148,7 @@ instance : BEq Model where
     a.date == b.date && a.time == b.time && a.volume.val == b.volume.val && a.treble.val == b.treble.val &&
     a.bass.val == b.bass.val && a.fruit == b.fruit && a.country == b.country && a.countryOpen == b.countryOpen &&
     a.color == b.color && a.colorOpen == b.colorOpen && a.share == b.share && a.todo == b.todo && a.done == b.done &&
-    a.paint == b.paint && a.ink == b.ink && a.inkOpen == b.inkOpen && a.previewDark == b.previewDark
+    a.paint == b.paint && a.ink == b.ink && a.inkOpen == b.inkOpen && a.previewDark == b.previewDark && a.clock == b.clock && a.ticks == b.ticks
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -162,7 +166,20 @@ def sunset : IO (Except ImageError Image) :=
     ((b.push r.toUInt8).push g.toUInt8 |>.push bl.toUInt8).push 255
   Image.ofRgba w h px
 
+/-- Sends a tick each second, from a thread of its own, until the gallery quits. -/
+partial def clock (send : Msg → IO Unit) (ms : Nat := 0) : IO Unit := do
+  if ← IO.checkCanceled then return
+  IO.sleep 100
+  if ms + 100 ≥ 1000 then
+    send .tick
+    clock send
+  else clock send (ms + 100)
+
 def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
+  | _, .startClock => do
+    if !(← get).1.clock then emit (.producer clock (by decide))
+    modify fun (m, cs) => ({ m with clock := true }, cs)
+  | _, .tick => modify fun (m, cs) => ({ m with ticks := m.ticks + 1 }, cs)
   | _, .inc => modify fun (m, cs) => ({ m with count := m.count + 1 }, cs)
   | _, .dec => modify fun (m, cs) => ({ m with count := m.count - 1 }, cs)
   | _, .name s => modify fun (m, cs) => ({ m with name := s }, cs)
@@ -253,7 +270,8 @@ def inputsPage (m : Model) : Node Msg :=
     field "Time" (Ui.timeField m.time .time "time"),
     Ui.label s!"{m.quantity.val} at {m.price.val / 100}.{m.price.val % 100 / 10}{m.price.val % 10} on {m.date.year}-{m.date.month}-{m.date.day} at {m.time.hour}:{m.time.minute}" "summary"] (px 8)
 
-/-- A select list, a dropdown and a dropdown of text. -/
+/-- A select list, a dropdown, a dropdown of text, and a clock, once started, ticking into a scroll
+that follows its end. -/
 def listsPage (m : Model) : Node Msg :=
   Ui.row [
     Ui.col [Ui.label "Fruit", Ui.width (px 200) (Ui.selectList fruits (some m.fruit) .fruit id id (key := "fruits")),
@@ -261,7 +279,11 @@ def listsPage (m : Model) : Node Msg :=
     Ui.col [Ui.label "Country",
       Ui.width (px 180) (Ui.dropdown countries m.country .country (·.2) (·.1) m.countryOpen .countryOpen "country"),
       Ui.label "Color",
-      Ui.width (px 180) (Ui.textDropdown ["red", "green", "blue", "orange"] m.color .color m.colorOpen .colorOpen "color")] (px 4)]
+      Ui.width (px 180) (Ui.textDropdown ["red", "green", "blue", "orange"] m.color .color m.colorOpen .colorOpen "color")] (px 4),
+    Ui.col [Ui.enabled (!m.clock) (Ui.button "Start clock" .startClock "startClock"),
+      Ui.width (px 120) (Ui.height (px 120) (Ui.scroll (Ui.col (spacing := 0)
+        ((List.range (min m.ticks 100)).map fun i => Ui.label s!"tick {m.ticks - min m.ticks 100 + i + 1}"))
+        "ticks" (follow := true)))] (px 4)]
     (px 24)
 
 /-- A split between a scroll down a list and a grid that scrolls both ways. -/

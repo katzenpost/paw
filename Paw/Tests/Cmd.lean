@@ -134,6 +134,14 @@ def tests : TestM Unit := do
   checkEq "a component's view, mapped into the parent's messages" "counter3" v.kind
   let (_, reqs) := v.handleAt Env.mock ⟨1⟩ (.click ⟨0, 0⟩ .primary 1)
   checkEq "its messages come out mapped" (some [Req.emit true]) reqs
+  -- Producers.
+  let prod : Cmd Nat [.io] .other := .producer (fun send => do send 1; send 2) (by decide)
+  check "a producer uses no authority" (!prod.usesAuthority)
+  let sent ← IO.mkRef ([] : List String)
+  match (prod.mapMsg toString).lift (caps' := [.notify, .io]) (by decide) with
+  | .producer run _ => run fun s => sent.modify (· ++ [s])
+  | _ => check "a producer maps and lifts to a producer" false
+  checkEq "a mapped producer sends its messages mapped" ["1", "2"] (← sent.get)
   checkEq "Origin.designation" (some d1) (Origin.user d1).designation
   checkEq "no designation for other" none Origin.other.designation
 

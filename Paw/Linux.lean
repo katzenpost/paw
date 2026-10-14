@@ -184,6 +184,8 @@ def platform : Platform where
     | r => match requestEnc r with
       | some bytes => Ffi.windowRequest (toBytes bytes)
       | none => pure ()
+  wake := Ffi.wake
+  wakes := true
 
 /-- Where each keyed widget is, one per line: its key, then its box's left, top, right and bottom
 in logical pixels. -/

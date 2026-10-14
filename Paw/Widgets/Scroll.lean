@@ -10,7 +10,9 @@ import Paw.Widgets.Basic
 A vertical scroll lays its child out in a content rectangle as tall as the child asks, shifted up
 by the scroll offset, and keeps a gutter on its right for its bar, which the child's box never
 covers. The tree clips what the child draws to the scroll's box. The wheel, and Page Up and Page
-Down from a focused child, bubble up to it. -/
+Down from a focused child, bubble up to it. A scroll that follows its end keeps the end of its
+content in view as the content grows, until it is scrolled back, and again once scrolled to the
+end. -/
 
 namespace Paw.Widgets
 
@@ -25,6 +27,8 @@ structure ScrollState where
   offset : Int := 0
   /-- How far the content is scrolled left, when it scrolls across. -/
   offsetX : Int := 0
+  /-- At the end of the content, for a scroll that follows it. -/
+  pinned : Bool := true
   deriving TypeName, Repr, Inhabited
 
 /-- The scroll offset kept within what the content allows. -/
@@ -61,11 +65,14 @@ def scrollLayoutFor (axes : ScrollAxes) : Layout where
      if axes.down then flexSize (h.fixed + h.flex) else pad h axes.across)
 
 /-- A scroll along `axes`: its content as large as the child asks along them, shifted by the
-offsets, clear of the gutters its bars are drawn in. -/
-def scrollWidgetFor {Msg : Type} (axes : ScrollAxes) : Widget Msg :=
+offsets, clear of the gutters its bars are drawn in. With `follow`, while pinned, the vertical
+offset is the end of the content, however tall it has grown. -/
+def scrollWidgetFor {Msg : Type} (axes : ScrollAxes) (follow : Bool := false) : Widget Msg :=
   -- The view, less the gutters for the bars.
   let inner (v : Rect) : Rect :=
     Rect.ofXYWH v.x0 v.y0 (v.width - if axes.down then gutter else 0) (v.height - if axes.across then gutter else 0)
+  -- The vertical offset asked for, which `clampOffset` brings to the end while pinned.
+  let wanted (st : ScrollState) (contentH : Int) : Int := if follow && st.pinned then contentH else st.offset
   Widget.Spec.build (σ := ScrollState) {
     kind := match axes with | .vertical => "scroll" | .horizontal => "hscroll" | .both => "scroll2"
     init := {}
@@ -74,7 +81,7 @@ def scrollWidgetFor {Msg : Type} (axes : ScrollAxes) : Widget Msg :=
       let i := inner v
       let w := if axes.across then max i.width (rw.flex : Int) else i.width
       let h := if axes.down then max i.height (rh.flex : Int) else i.height
-      Rect.ofXYWH (v.x0 - clampOffset st.offsetX w i.width) (v.y0 - clampOffset st.offset h i.height) w h
+      Rect.ofXYWH (v.x0 - clampOffset st.offsetX w i.width) (v.y0 - clampOffset (wanted st h) h i.height) w h
     render := fun env _ v =>
       let i := inner v
       let c := env.content
@@ -94,7 +101,9 @@ def scrollWidgetFor {Msg : Type} (axes : ScrollAxes) : Widget Msg :=
     handle := fun env st v e =>
       let i := inner v
       let c := env.content
-      let byY (d : Int) := { st with offset := clampOffset (clampOffset st.offset c.height i.height + d) c.height i.height }
+      let byY (d : Int) :=
+        let offset := clampOffset (clampOffset (wanted st c.height) c.height i.height + d) c.height i.height
+        { st with offset, pinned := offset ≥ c.height - i.height }
       let byX (d : Int) := { st with offsetX := clampOffset (clampOffset st.offsetX c.width i.width + d) c.width i.width }
       match e with
       | .wheel _ dx dy =>

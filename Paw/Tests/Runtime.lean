@@ -112,6 +112,43 @@ def click (rt : Runtime app) (x y : Int) (t : Nat) (synthetic := false) :
   let (rt, o2) := rt.step (input (.release p .primary) (t + 50) synthetic) (t + 50)
   (rt, o1 ++ o2)
 
+def producers (outs : List (Output Msg)) : Nat :=
+  (outs.filter fun | .producer _ => true | _ => false).length
+
+/-- `app`, starting a producer that runs `run`. -/
+def producing (run : (Msg → IO Unit) → IO Unit) : App caps := { app with start := [.producer run (by decide)] }
+
+/-- A platform that can be woken: a poll with no timeout waits, up to about 200 ms, for a wake, then
+plays `script` as `fakePlatform` does, recording each wait. -/
+def wakingPlatform (script : IO.Ref (List (List WindowEvent))) (waits : IO.Ref (Array (Option Nat)))
+    (woken : IO.Ref Bool) : Platform where
+  poll := fun w => do
+    waits.modify (·.push w)
+    if w.isNone then
+      let mut n := 0
+      while !(← woken.get) && n < 200 do
+        IO.sleep 1
+        n := n + 1
+    woken.set false
+    match ← script.get with
+    | evs :: rest => script.set rest; return evs
+    | [] => return [.close]
+  now := pure 0
+  size := pure (px 100, px 100)
+  measure := Env.mock.measure
+  perform := fun _ => pure ()
+  wake := woken.set true
+  wakes := true
+
+/-- The last model of `producing run` on a waking platform for `polls` polls, and the waits. -/
+def runWaking (run : (Msg → IO Unit) → IO Unit) (polls : Nat) : IO (Model × Array (Option Nat)) := do
+  let script ← IO.mkRef (List.replicate polls [])
+  let waits ← IO.mkRef #[]
+  let woken ← IO.mkRef false
+  let last ← IO.mkRef ({} : Model)
+  Paw.Runtime.run (producing run) (wakingPlatform script waits woken) fun rt => last.set rt.model
+  return (← last.get, ← waits.get)
+
 /-- A platform that plays `script`, one list of events per poll, and records what it is asked. -/
 def fakePlatform (script : IO.Ref (List (List WindowEvent))) (log : IO.Ref (Array Request))
     (clock : IO.Ref Nat) : Platform where
@@ -151,6 +188,14 @@ def tests : TestM Unit := do
   let (rt, outs) := rt.taskResult (.got 7) 4100
   checkEq "the result reaches update" [7] rt.model.got
   checkEq "and draws" 1 (presents outs)
+  let (rt, outs) := rt.results [.got 1, .got 2] 4150
+  checkEq "results from producers reach update in order" [7, 1, 2] rt.model.got
+  checkEq "with one frame for them all" 1 (presents outs)
+  checkEq "an app starts nothing unless it asks" 0 (producers begin.2)
+  let started := Paw.Runtime.start (producing fun _ => pure ()) (Rect.ofXYWH 0 0 (px 100) (px 100)) 0
+    Env.mock.measure
+  checkEq "an app's start commands come with its first scene" 1 (producers started.2)
+  checkEq "after it" 1 (presents (started.2.take 1))
   -- Bubbling: the wheel over the inner bar reaches the catcher around it.
   let before := rt.model.count
   let (rt, _) := rt.step (input (.wheel ⟨px 5, px 55⟩ 0 1) 4200) 4200
@@ -193,5 +238,28 @@ def tests : TestM Unit := do
   let reqs ← log.get
   check "the loop draws the first scene and after each change" (reqs.size ≥ 3)
   check "the loop stops when the window closes" ((← script.get).isEmpty)
+  -- Producers in the loop, on a platform that is woken.
+  let (m, waits) ← runWaking (fun send => do send (.got 1); send (.got 2); send (.got 3)) 3
+  checkEq "what a producer sends reaches update" [1, 2, 3] m.got
+  check "and the loop waits for a wake, never polling" (waits.all (·.isNone))
+  let (m, _) ← runWaking (fun send => do send (.got 1); throw (IO.userError "gone")) 3
+  checkEq "a producer that fails ends, and the loop goes on" [1] m.got
+  -- Once the app quits, producers are told to stop.
+  let refused ← IO.mkRef false
+  let canceled ← IO.mkRef false
+  let _ ← runWaking (fun send => do
+    repeat
+      try send (.got 1) catch _ => refused.set true; return
+      IO.sleep 5) 2
+  let _ ← runWaking (fun _ => do
+    repeat
+      if ← IO.checkCanceled then canceled.set true; return
+      IO.sleep 5) 2
+  let mut n := 0
+  while !((← refused.get) && (← canceled.get)) && n < 200 do
+    IO.sleep 5
+    n := n + 1
+  check "after the app quits, a producer's send throws" (← refused.get)
+  check "and a producer still running is cancelled" (← canceled.get)
 
 end Paw.Tests.Runtime

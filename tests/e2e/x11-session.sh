@@ -95,6 +95,13 @@ expect "notes=one|two" "typing reaches a text area, over two lines"
 click load
 expect "picture=true" "a task's picture is shown"
 
+# A producer started from a button ticks into the model while the gallery is otherwise idle,
+# and does not keep the gallery from quitting.
+click tab-Lists
+sleep 1
+click startClock
+expect "ticks=2" "a producer's messages wake the loop"
+
 xdotool key ctrl+q
 expect_exit "ctrl-q quits"
 exit $FAILED

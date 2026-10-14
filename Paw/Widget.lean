@@ -135,13 +135,15 @@ structure Widget (Msg : Type) where
   dispose : Dynamic → List (Req Msg)
   /-- How it describes itself to assistive technology, if at all. -/
   access : Env → Dynamic → Option Access
-  /-- While this is `some ms`, the widget gets `Event.tick` every `ms` milliseconds, while the
-  window can be seen. A function of its state, as Elm's subscriptions are of the model: a widget
-  that leaves the tree or changes its state stops ticking, with nothing to undo. -/
-  every : Env → Dynamic → Option Nat
-  /-- The widget and what is in it are moving, as in an animation: the router counts them as moved
-  on every layout, so nothing in them can be designated until they have been still for `stableMs`. -/
-  moving : Env → Dynamic → Bool
+  /-- For a widget that may tick: while this gives `some ms`, the widget gets `Event.tick` every
+  `ms` milliseconds, while the window can be seen. A function of its state, as Elm's subscriptions
+  are of the model: a widget that leaves the tree or changes its state stops ticking, with nothing
+  to undo. `none` for the many widgets that never tick, which costs nothing to ask. -/
+  every : Option (Env → Dynamic → Option Nat)
+  /-- For a widget that may move, as an animation does: while this gives true, the router counts the
+  widget and what is in it as moved on every layout, so nothing in them can be designated until
+  they have been still for `stableMs`. -/
+  moving : Option (Env → Dynamic → Bool)
   /-- How a container changes its children's drawing, before the tree clips it to the box: a
   fade lowers its alpha. -/
   mapChildren : Env → Dynamic → Scene → Scene
@@ -159,8 +161,8 @@ structure Widget.Spec (Msg σ : Type) where
   focusable : Bool := false
   dispose : σ → List (Req Msg) := fun _ => []
   access : Env → σ → Option Access := fun _ _ => none
-  every : Env → σ → Option Nat := fun _ _ => none
-  moving : Env → σ → Bool := fun _ _ => false
+  every : Option (Env → σ → Option Nat) := none
+  moving : Option (Env → σ → Bool) := none
   mapChildren : Env → σ → Scene → Scene := fun _ _ s => s
 
 namespace Widget.Spec
@@ -183,8 +185,8 @@ def build (s : Widget.Spec Msg σ) : Widget Msg where
   focusable := s.focusable
   dispose := fun d => s.dispose (s.state d)
   access := fun env d => s.access env (s.state d)
-  every := fun env d => s.every env (s.state d)
-  moving := fun env d => s.moving env (s.state d)
+  every := s.every.map fun f env d => f env (s.state d)
+  moving := s.moving.map fun f env d => f env (s.state d)
   mapChildren := fun env d => s.mapChildren env (s.state d)
 
 end Widget.Spec

@@ -182,7 +182,7 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
       | .tick _ | .blur | .enter _ | .leave _ => some (st, [])
       | _ => none
     focusable := true
-    every := fun env _ => if env.isFocused && env.windowFocused then some blinkMs else none
+    every := some fun env _ => if env.isFocused && env.windowFocused then some blinkMs else none
     access := fun _ _ =>
       some { role := .textInput, name := cfg.placeholder, value := some (SafeText.filter value) } }
 

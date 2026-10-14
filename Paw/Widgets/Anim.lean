@@ -45,8 +45,8 @@ def animation {Msg : Type} (kind : String) (ms : Nat) (draw : Nat → Scene → 
     handle := fun _ st _ e => match e with
       | .tick now => some ({ start := st.start.orElse fun _ => some now }, [])
       | _ => none
-    every := fun env st => if st.progress env ms < 1000 then some frameMs else none
-    moving := fun env st => st.progress env ms < 1000
+    every := some fun env st => if st.progress env ms < 1000 then some frameMs else none
+    moving := some fun env st => st.progress env ms < 1000
     mapChildren := fun env st s => draw (st.progress env ms) s }
 
 /-- Its children drawn from transparent to opaque over `ms`. -/

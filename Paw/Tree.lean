@@ -742,11 +742,11 @@ def indexInto (env : Env) (win clip : Rect) (path : Array Nat) (moving : Bool) (
     let seen := i.viewport.inter clip
     if i.visible && !seen.isEmpty then
       let p := path.toList
-      let e := envAt env i
-      let moving := moving || w.moving e st
+      -- Only widgets that may tick or move are asked, so the rest cost nothing here.
+      let moving := moving || w.moving.any fun f => f (envAt env i) st
       let acc := { nodes := acc.nodes.push (i.id, i.viewport, p, moving),
                    overlays := if i.overlay.isSome then acc.overlays.push (n, p) else acc.overlays,
-                   tickers := match w.every e st with
+                   tickers := match w.every.bind fun f => f (envAt env i) st with
                      | some ms => acc.tickers.push (i.id, ms)
                      | none => acc.tickers }
       indexList env win seen path moving 0 acc cs

@@ -41,7 +41,7 @@ def ticker : Widget Msg := Widget.Spec.build (σ := Nat) {
   handle := fun _ n _ e => match e with
     | .tick _ => some (n + 1, [.emit .ticked])
     | _ => none
-  every := fun _ n => if n < 3 then some 100 else none }
+  every := some fun _ n => if n < 3 then some 100 else none }
 
 def update : (o : Origin) → Msg → UpdateM Model Msg [] o Unit
   | _, .ticked => modify fun (m, cs) => ({ m with ticks := m.ticks + 1 }, cs)

@@ -56,6 +56,11 @@ inductive Req (Msg : Type) where
   | render
   deriving Repr, DecidableEq
 
+def Req.map {α β : Type} (f : α → β) : Req α → Req β
+  | .emit m => .emit (f m)
+  | .focus id => .focus id
+  | .render => .render
+
 structure Widget (Msg : Type) where
   /-- Widgets merge only with widgets of the same kind. -/
   kind : String
@@ -73,6 +78,20 @@ structure Widget (Msg : Type) where
   dispose : State → List (Req Msg) := fun _ => []
 
 attribute [instance] Widget.stateName
+
+/-- The widget with its messages mapped by `f`, as a component's widgets are mapped into its
+parent's messages. -/
+def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β where
+  kind := w.kind
+  State := w.State
+  init := w.init
+  merge := w.merge
+  sizeReq := w.sizeReq
+  render := w.render
+  render_within := w.render_within
+  handle := fun env st v e => (w.handle env st v e).map fun (st, rs) => (st, rs.map (Req.map f))
+  focusable := w.focusable
+  dispose := fun st => (w.dispose st).map (Req.map f)
 
 /-- A widget that only holds children: it draws nothing and asks for nothing itself. -/
 def Widget.container {Msg : Type} (kind : String) : Widget Msg where

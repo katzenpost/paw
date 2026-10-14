@@ -25,11 +25,13 @@ use authority require. A click or key designates nothing when:
 
 namespace Paw
 
-/-- That the user chose `target` with the input numbered `serial`. Only the router makes these. -/
+/-- That the user chose `target`, a widget with `key`, with the input numbered `serial`. Only the
+router makes these. -/
 structure Designation where
   private mk ::
   serial : Nat
   target : WidgetId
+  key : Option String
   time : Nat
   deriving Repr, DecidableEq
 
@@ -96,12 +98,12 @@ def stable (rt : Router) (id : WidgetId) (now : Nat) : Bool :=
   | some (_, t) => now ≥ t + rt.stableMs
   | none => false
 
-/-- A designation of `target` by input `i`, numbered `serial`, if the checks pass. -/
-def designate (rt : Router) (serial : Nat) (i : Input) (target : WidgetId) (isKey : Bool) :
-    Option Designation :=
+/-- A designation of `target`, with `key`, by input `i`, numbered `serial`, if the checks pass. -/
+def designate (rt : Router) (serial : Nat) (i : Input) (target : WidgetId) (key : Option String)
+    (isKey : Bool) : Option Designation :=
   let focusHeld := !isKey || i.time ≥ rt.focusedAt + rt.stableMs
   if !i.synthetic && !i.obscured && rt.stable target i.time && focusHeld then
-    some ⟨serial, target, i.time⟩
+    some ⟨serial, target, key, i.time⟩
   else none
 
 /-- Moves focus to `to`, with blur and focus events. -/
@@ -161,12 +163,13 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     | some id =>
       let rel : Delivery := { target := id, event := .release p b }
       let rt := { rt with pressed := none }
-      if (at? p).map (·.id) == some id then
+      if let some n := (at? p).filter (·.id == id) then
         let count := match rt.lastClick with
           | some (last, t, c) => if last == id && i.time ≤ t + rt.doubleClickMs then c + 1 else 1
           | none => 1
         let click : Delivery :=
-          { target := id, event := .click p b count, designation := rt.designate serial i id false }
+          { target := id, event := .click p b count,
+            designation := rt.designate serial i id n.key false }
         ({ rt with lastClick := some (id, i.time, count) }, [rel, click])
       else (rt, [rel])
     | none => (rt, [])
@@ -185,7 +188,8 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     rt.moveFocus to i.time
   | .key k m pressed =>
     (rt, rt.focused.toList.map fun id =>
-      { target := id, event := .key k m pressed, designation := rt.designate serial i id true })
+      { target := id, event := .key k m pressed,
+        designation := rt.designate serial i id ((tree.find? id).bind (·.key)) true })
   | .text s => (rt, rt.focused.toList.map fun id => { target := id, event := .text s })
   | .paste s => (rt, rt.focused.toList.map fun id => { target := id, event := .paste s })
 

@@ -92,7 +92,7 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | Coordinates are `Double` | Integer units (for example 1/64 px) | Ordering laws on integers are decidable and `omega` proves them |
 | Clipping is opt-in (`singleUseScissor = False`) | Every widget has a law that its Scene lies within its box | Text and images from elsewhere cannot draw over neighbours |
 | One `WidgetRequest` type where any widget can run IO or write the clipboard | `Cmd caps origin`: effects need a capability and a designation | Authority follows the user's choice and the component's declared capabilities |
-| Task results and input arrive as the same event type | Messages arrive with an `Origin` | The rule "effects come from user actions" becomes a type |
+| Task results and input arrive as the same event type | Messages arrive with an `Origin`: `user d` for the user's choice, `other` for anything else | The rule "effects come from user actions" becomes a type |
 | `WidgetKey` is any `Text`, and duplicates are undefined | Keys are strings, and a key a sibling before already has is dropped, with a proof that keys are then unique | Content cannot choose a key that takes over another widget's state |
 | Widget functions receive their node, and containers call their children's functions | Widget functions receive only their own state and box; `Paw.Tree` merges, lays out and draws children | Lean only accepts a node type that holds widgets if widgets do not take nodes as arguments; a widget also cannot act outside its own box |
 | `Typeable` and `cast` for widget state and messages | One message type for the whole tree; widget state carried across a merge through `Dynamic`, only between widgets of the same kind | Lean's types replace runtime casts where possible |
@@ -219,30 +219,37 @@ Overlap is sometimes wanted, as in a z-stack or a popup. Those layouts do not ca
 
 ### Authority and origin
 
-Effects that use authority need two things: a capability the component declared, and a designation from the input event being handled.
+Effects that use authority need two things: a capability the component declared, and a designation from the input being handled, of a widget whose key is the effect's target. The app knows its widgets' keys, such as a message's id, and never their `WidgetId`s.
 
 ```lean
 inductive Cap where
-  | clipboardWrite | openUri | openFile | notify
+  | clipboardWrite | openUri | notify | io
 
 structure Designation where
   private mk ::
   serial : Nat
   target : WidgetId
+  key : Option String
   time : Nat
 
 inductive Origin where
-  | input (d : Designation)
-  | result
+  | user (d : Designation)
+  | other
 
 inductive Effect : Cap → Type where
-  | setClipboard (obj : ObjId) (t : SafeText) : Effect .clipboardWrite
-  | openUri (obj : ObjId) (uri : String) : Effect .openUri
+  | setClipboard (target : String) (t : SafeText) : Effect .clipboardWrite
+  | openUri (target : String) (uri : String) (ok : Uri.allowed uri = true) : Effect .openUri
 
-inductive Cmd (caps : List Cap) : Origin → Type where
-  | render : Cmd caps o
+def Effect.DesignatedBy (e : Effect c) (d : Designation) : Prop :=
+  e.target.all (fun k => d.key == some k) = true
+
+inductive Cmd (Msg : Type) (caps : List Cap) : Origin → Type where
   | effect {c} (d : Designation) (e : Effect c) (granted : c ∈ caps)
-      (designated : e.target = d.target) : Cmd caps (.input d)
+      (designated : e.DesignatedBy d) : Cmd Msg caps (.user d)
+  | task {o} (io : IO Msg) (granted : Cap.io ∈ caps) : Cmd Msg caps o
+  | notify {o} (title : SafeName) (body : SafeText) (granted : Cap.notify ∈ caps) : Cmd Msg caps o
+  | setTitle {o} (title : SafeName) : Cmd Msg caps o
+  | quit {o} : Cmd Msg caps o
 ```
 
 How these types enforce the rules:
@@ -252,37 +259,52 @@ How these types enforce the rules:
   - the touch was not obscured by another app's overlay;
   - the event was not synthetic;
   - for a key, focus has stayed on the widget for long enough, so typing meant for elsewhere did not follow a focus change.
-- **A command is tied to the event being handled.** The command type is indexed by the origin of that event. An `effect` exists only in `Cmd caps (.input d)`, for the `d` of that event and for an object equal to its target. A designation kept in the model from an earlier event has the wrong index, so it cannot authorize anything later.
-- **Results cannot use authority.** This is a theorem, proved by case analysis:
+- **A command is tied to the input being handled.** The runtime gives a widget's messages origin `user d` only while handling the input `d` came with; every other message has origin `other`. An `effect` exists only in `Cmd Msg caps (.user d)`, for that `d`, and only for a target the clicked widget's key names. A designation kept in the model from an earlier input has the wrong index, so it authorizes nothing later.
+- **Nothing else can use authority.** This is a theorem, proved by case analysis:
 
   ```lean
-  theorem Cmd.result_no_authority (cmd : Cmd caps .result) : ¬ cmd.UsesAuthority
+  theorem Cmd.other_no_authority (cmd : Cmd Msg caps .other) : cmd.usesAuthority = false
   ```
 
+- **Links are checked when the effect is made.** `openUri` needs a proof that the link has an allowed scheme (`https`, `http`, `mailto`), something after it, and only printable characters. `Effect.openUri?` returns `none` for anything else.
+- **Notifications and titles need no designation.** A new message must be able to notify, so these take only filtered text: `SafeName` and `SafeText`.
 - **Capabilities compose by inclusion.** A parent embeds a child component only with a proof that the child's capabilities are among its own. `decide` proves this for concrete lists. The child's commands are lifted with:
 
   ```lean
-  def Cmd.lift (sub : caps ⊆ caps') : Cmd caps o → Cmd caps' o
+  def Cmd.lift (sub : caps ⊆ caps') : Cmd Msg caps o → Cmd Msg caps' o
+  theorem Cmd.lift_usesAuthority (sub : caps ⊆ caps') (c : Cmd Msg caps o) :
+      (c.lift sub).usesAuthority = c.usesAuthority
   ```
 
   So the capabilities an app declares at its root bound everything every nested component can do. This is the same transitive pattern as the clipping law.
 
 ### The update monad
 
-`update` runs in a state monad over the model and the commands emitted so far, indexed by the event's origin:
+`update` runs in a state monad over the model and the commands emitted so far, indexed by the message's origin:
 
 ```lean
-abbrev UpdateM (σ : Type) (caps : List Cap) (o : Origin) := StateM (σ × Array (Cmd caps o))
+abbrev UpdateM (σ Msg : Type) (caps : List Cap) (o : Origin) :=
+  StateM (σ × Array (Cmd Msg caps o))
 
-def emit (c : Cmd caps o) : UpdateM σ caps o Unit := modify fun (s, cs) => (s, cs.push c)
+def emit (c : Cmd Msg caps o) : UpdateM σ Msg caps o Unit := modify fun (s, cs) => (s, cs.push c)
 
 structure Component (caps : List Cap) where
   Model : Type
   Msg : Type
-  update : (o : Origin) → Msg → UpdateM Model caps o Unit
+  update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
+  view : Model → Node Msg
 ```
 
-Handlers are written in `do` notation with `modify`, `get` and `emit`. Properties of a particular handler, such as "removing an item leaves the others in order", can be stated as `Std.Do` triples about `update`, as `KEM.lean` states `generate_ok` and `decap_ok`.
+Handlers are written in `do` notation with `modify`, `get` and `emit`. An effect for the clicked item is emitted after a decidable check that the designation names it:
+
+```lean
+  | .user d, .openLink key uri => do
+    match Effect.openUri? key uri with
+    | some e => if h : e.DesignatedBy d then emit (.effect d e (by decide) h) else …
+    | none => …
+```
+
+A component is embedded by mapping its view's messages with `Node.mapMsg` and its commands with `Cmd.mapMsg`, and lifting its commands with `Cmd.lift`. Properties of a particular handler, such as "removing an item leaves the others in order", can be stated as `Std.Do` triples about `update`, as `KEM.lean` states `generate_ok` and `decap_ok`.
 
 ### Keys
 

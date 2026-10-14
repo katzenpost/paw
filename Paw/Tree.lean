@@ -320,6 +320,16 @@ def handleList (env : Env) (id : WidgetId) (e : Event) :
 end
 
 mutual
+/-- The tree with its messages mapped by `f`. -/
+def mapMsg {β : Type} (f : Msg → β) : Node Msg → Node β
+  | mk w st i l cs => mk (w.mapMsg f) st i l (mapMsgList f cs)
+
+def mapMsgList {β : Type} (f : Msg → β) : List (Node Msg) → List (Node β)
+  | [] => []
+  | c :: cs => mapMsg f c :: mapMsgList f cs
+end
+
+mutual
 /-- The topmost visible node at `p`: the deepest, and of overlapping siblings the later. -/
 def hit? (p : Point) : Node Msg → Option (Node Msg)
   | n@(mk _ _ i _ cs) =>

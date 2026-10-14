@@ -122,6 +122,7 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
   ("gallery-dark", sceneOf galleryDark, 640, 560, 1000),
   ("gallery-inputs", sceneOf (step (step (click (click gallery "tab-Inputs" 1000) "quantity" 2000)
       (.key (.char 'a') { ctrl := true } true) 2100) (.text "4x") 2200), 640, 560, 1000),
+  ("dropdown-open", sceneOf (click (click gallery "tab-Lists" 1000) "country" 2000), 640, 560, 1000),
   ("gallery-choices", sceneOf (click (click gallery "tab-Choices" 1000) "large" 2000), 640, 560, 1000),
   ("textarea", sceneOf galleryNotes, 640, 560, 1000),
   ("gallery-fading", sceneOf galleryFading, 640, 560, 1000),

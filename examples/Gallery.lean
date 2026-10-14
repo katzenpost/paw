@@ -22,7 +22,14 @@ inductive Page where
   | basics
   | choices
   | inputs
+  | lists
   deriving Repr, BEq, Inhabited
+
+def fruits : List String :=
+  ["apple", "apricot", "banana", "blackberry", "cherry", "date", "fig", "grape", "kiwi", "lemon", "mango", "pear"]
+
+def countries : List (String × String) :=
+  [("fr", "France"), ("de", "Germany"), ("jp", "Japan"), ("ke", "Kenya"), ("pe", "Peru"), ("nz", "New Zealand")]
 
 abbrev Quantity := { x : Int // 0 ≤ x ∧ x ≤ 99 }
 /-- A price in cents, at most a thousand. -/
@@ -73,6 +80,11 @@ inductive Msg where
   | volume (v : Widgets.Ranged 0 100)
   | treble (v : Widgets.Ranged 0 10)
   | bass (v : Widgets.Ranged 0 10)
+  | fruit (f : String)
+  | country (c : String × String)
+  | countryOpen (b : Bool)
+  | color (c : String)
+  | colorOpen (b : Bool)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -101,6 +113,11 @@ structure Model where
   volume : Widgets.Ranged 0 100 := ⟨40, by decide⟩
   treble : Widgets.Ranged 0 10 := ⟨5, by decide⟩
   bass : Widgets.Ranged 0 10 := ⟨5, by decide⟩
+  fruit : String := "cherry"
+  country : String × String := ("jp", "Japan")
+  countryOpen : Bool := false
+  color : String := "green"
+  colorOpen : Bool := false
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
@@ -108,7 +125,8 @@ instance : BEq Model where
     a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture && a.notes == b.notes && a.page == b.page && a.size == b.size &&
     a.align == b.align && a.bold == b.bold && a.quantity.val == b.quantity.val && a.price.val == b.price.val &&
     a.date == b.date && a.time == b.time && a.volume.val == b.volume.val && a.treble.val == b.treble.val &&
-    a.bass.val == b.bass.val
+    a.bass.val == b.bass.val && a.fruit == b.fruit && a.country == b.country && a.countryOpen == b.countryOpen &&
+    a.color == b.color && a.colorOpen == b.colorOpen
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -170,6 +188,11 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .volume v => modify fun (m, cs) => ({ m with volume := v }, cs)
   | _, .treble v => modify fun (m, cs) => ({ m with treble := v }, cs)
   | _, .bass v => modify fun (m, cs) => ({ m with bass := v }, cs)
+  | _, .fruit f => modify fun (m, cs) => ({ m with fruit := f }, cs)
+  | _, .country c => modify fun (m, cs) => ({ m with country := c }, cs)
+  | _, .countryOpen b => modify fun (m, cs) => ({ m with countryOpen := b }, cs)
+  | _, .color c => modify fun (m, cs) => ({ m with color := c }, cs)
+  | _, .colorOpen b => modify fun (m, cs) => ({ m with colorOpen := b }, cs)
 
 /-- Radio buttons, option buttons, a toggle button and separators. -/
 def choicesPage (m : Model) : Node Msg :=
@@ -199,6 +222,17 @@ def inputsPage (m : Model) : Node Msg :=
     field "Time" (Ui.timeField m.time .time "time"),
     Ui.label s!"{m.quantity.val} at {m.price.val / 100}.{m.price.val % 100 / 10}{m.price.val % 10} on {m.date.year}-{m.date.month}-{m.date.day} at {m.time.hour}:{m.time.minute}" "summary"] (px 8)
 
+/-- A select list, a dropdown and a dropdown of text. -/
+def listsPage (m : Model) : Node Msg :=
+  Ui.row [
+    Ui.col [Ui.label "Fruit", Ui.width (px 200) (Ui.selectList fruits (some m.fruit) .fruit id id (key := "fruits")),
+      Ui.label s!"chosen: {m.fruit}" "fruitValue"] (px 4),
+    Ui.col [Ui.label "Country",
+      Ui.width (px 180) (Ui.dropdown countries m.country .country (·.2) (·.1) m.countryOpen .countryOpen "country"),
+      Ui.label "Color",
+      Ui.width (px 180) (Ui.textDropdown ["red", "green", "blue", "orange"] m.color .color m.colorOpen .colorOpen "color")] (px 4)]
+    (px 24)
+
 /-- The first page: what the gallery had before it had tabs. -/
 def basicsPage (m : Model) : Node Msg :=
   Ui.col [
@@ -227,7 +261,7 @@ def view (m : Model) : Node Msg :=
   Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
   Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
     Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m),
-      ("Inputs", .inputs, inputsPage m)]] ++
+      ("Inputs", .inputs, inputsPage m), ("Lists", .lists, listsPage m)]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")

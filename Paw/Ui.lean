@@ -14,6 +14,7 @@ import Paw.Widgets.Image
 import Paw.Widgets.Choice
 import Paw.Widgets.Input
 import Paw.Widgets.Slider
+import Paw.Widgets.List
 
 /-! # Building views
 
@@ -167,6 +168,51 @@ def vslider {lo hi : Int} (value : Ranged lo hi) (onChange : Ranged lo hi → Ms
 def dial {lo hi : Int} (value : Ranged lo hi) (onChange : Ranged lo hi → Msg) (step : Nat := 1)
     (key : Option String := none) : Node Msg :=
   Node.leaf (Widgets.dial value onChange step) key
+
+/-- What a row of a select list is built from, so that a row whose caption and choice are unchanged
+is not built again. -/
+structure ListRow where
+  caption : String
+  chosen : Bool
+  deriving BEq, TypeName
+
+/-- `items` in rows, `selected` chosen, in a box `rows` rows tall that scrolls; `extra` is asked
+for too when one is clicked. -/
+def selectListWith {α : Type} [BEq α] (items : List α) (selected : Option α) (onChange : α → Msg)
+    (caption : α → String) (keyOf : α → String) (rows : Nat := 6) (extra : List Msg := [])
+    (key : Option String := none) : Node Msg :=
+  let arr := items.toArray
+  let chosen := selected.bind fun s => arr.findIdx? (· == s)
+  let pick (i : Nat) : List Msg := (arr[i]?.map fun a => [onChange a]).getD [] ++ extra
+  let row (a : α) : Node Msg :=
+    (Ui.lazy (ListRow.mk (caption a) (selected.any (· == a))) fun r =>
+      Node.leaf (Widgets.listItem (SafeText.filter r.caption) r.chosen (onChange a :: extra))).withInfo
+      ({ · with key := some (keyOf a) })
+  Node.containerWith (selectListBox items.length chosen pick) (listLayout rows) (items.map row) key
+
+/-- `items` in rows, `selected` chosen, in a box that scrolls. -/
+def selectList {α : Type} [BEq α] (items : List α) (selected : Option α) (onChange : α → Msg)
+    (caption : α → String) (keyOf : α → String) (rows : Nat := 6) (key : Option String := none) : Node Msg :=
+  selectListWith items selected onChange caption keyOf rows [] key
+
+/-- A button showing `selected`, which opens a select list of `items` below it while `isOpen`;
+choosing one closes it. -/
+def dropdown {α : Type} [BEq α] (items : List α) (selected : α) (onChange : α → Msg) (caption : α → String)
+    (keyOf : α → String) (isOpen : Bool) (onOpen : Bool → Msg) (key : Option String := none) : Node Msg :=
+  let arr := items.toArray
+  let idx := (arr.findIdx? (· == selected)).getD 0
+  let onStep (next : Bool) : List Msg :=
+    let i := if next then idx + 1 else idx - 1
+    (arr[i]?.map fun a => [onChange a]).getD []
+  popup isOpen
+    (Node.leaf (Widgets.dropdownButton (SafeText.filter (caption selected)) isOpen onOpen onStep) key)
+    (selectListWith items (some selected) onChange caption keyOf (rows := min 6 items.length) (extra := [onOpen false]))
+    (onOpen false)
+
+/-- A dropdown of strings. -/
+def textDropdown (items : List String) (selected : String) (onChange : String → Msg) (isOpen : Bool)
+    (onOpen : Bool → Msg) (key : Option String := none) : Node Msg :=
+  dropdown items selected onChange id id isOpen onOpen key
 
 /-- A line across the box, or down it if `vertical`. -/
 def separator (vertical : Bool := false) : Node Msg := Node.leaf (Widgets.separator vertical)

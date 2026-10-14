@@ -131,6 +131,8 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
   ("dropdown-open", sceneOf (click (click gallery "tab-Lists" 1000) "country" 2000), 640, 560, 1000),
   ("gallery-layout", sceneOf (step (click gallery "tab-Layout" 1000) (.wheel ⟨px 400, px 200⟩ 2 3) 2000), 640, 560, 1000),
   ("dragging", sceneOf galleryDragging, 640, 560, 1000),
+  ("gallery-colors", sceneOf (click gallery "tab-Colors" 1000), 640, 560, 1000),
+  ("color-popup", sceneOf (click (click gallery "tab-Colors" 1000) "ink" 2000), 640, 560, 1000),
   ("gallery-choices", sceneOf (click (click gallery "tab-Choices" 1000) "large" 2000), 640, 560, 1000),
   ("textarea", sceneOf galleryNotes, 640, 560, 1000),
   ("gallery-fading", sceneOf galleryFading, 640, 560, 1000),

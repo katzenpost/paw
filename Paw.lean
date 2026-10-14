@@ -33,5 +33,6 @@ import Paw.Widgets.List
 import Paw.Widgets.Split
 import Paw.Widgets.Link
 import Paw.Widgets.Drag
+import Paw.Widgets.Color
 import Paw.Ui
 import Paw.Linux

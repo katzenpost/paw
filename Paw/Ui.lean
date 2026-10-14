@@ -18,6 +18,7 @@ import Paw.Widgets.List
 import Paw.Widgets.Split
 import Paw.Widgets.Link
 import Paw.Widgets.Drag
+import Paw.Widgets.Color
 import Paw.Cmd
 
 /-! # Building views
@@ -313,3 +314,35 @@ def draggable {α : Type} [TypeName α] (payload : α) (child : Node Msg) (key :
 def dropTarget {α : Type} [TypeName α] (accept : α → Msg) (child : Node Msg) (key : Option String := none) :
     Node Msg :=
   Node.containerWith (Widgets.dropTarget accept) (box { expand := true }) [child] key
+
+/-- `child` with a shadow `depth` units deep around it, `radius` round: the shadow is drawn within
+the room kept for it, never outside. -/
+def boxShadow (child : Node Msg) (depth : Int := px 8) (radius : Int := px 6) : Node Msg :=
+  Node.containerWith (Widgets.shadow depth radius) (padLayout depth) [child]
+
+/-- A switch between themes: `child` with `theme`. -/
+def themeSwitch (theme : Theme) (child : Node Msg) : Node Msg := themed theme child
+
+/-- Sliders and fields for the red, green and blue of `value`, and its alpha if `alpha`, beside a
+swatch of it. -/
+def colorPicker (value : Color) (onChange : Color → Msg) (alpha : Bool := false) (key : Option String := none) :
+    Node Msg :=
+  let channel (name : String) (get : Color → UInt8) (set : Color → UInt8 → Color) : Node Msg :=
+    let v : Widgets.Ranged 0 255 := ⟨(get value).toNat, by have := (get value).toNat_lt; omega⟩
+    let to (x : Widgets.Ranged 0 255) : Msg := onChange (set value x.1.toNat.toUInt8)
+    row [width (px 16) (label name), width (px 160) (hslider v to (key := s!"{name}Slider")),
+      width (px 64) (numericField v to (key := s!"{name}Field"))]
+  let channels := [channel "R" (·.r) fun c x => { c with r := x }, channel "G" (·.g) fun c x => { c with g := x },
+    channel "B" (·.b) fun c x => { c with b := x }] ++
+    (if alpha then [channel "A" (·.a) fun c x => { c with a := x }] else [])
+  row [Node.leaf (Widgets.swatch value (size := px 48)), col channels (px 4)] (px 12) key
+
+/-- A swatch of `value` that, clicked, opens a color picker below it while `isOpen`. -/
+def colorPopup (value : Color) (onChange : Color → Msg) (isOpen : Bool) (onOpen : Bool → Msg)
+    (alpha : Bool := false) (key : Option String := none) : Node Msg :=
+  popup isOpen (Node.leaf (Widgets.swatch value (some (onOpen !isOpen))) key)
+    (pad (px 8) (colorPicker value onChange alpha)) (onOpen false)
+
+/-- `child` on a framed panel of the theme's surface. -/
+def panel (child : Node Msg) (padding : Int := px 12) : Node Msg :=
+  Node.containerWith tipPanel (padLayout padding) [child]

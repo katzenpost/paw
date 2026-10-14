@@ -25,6 +25,7 @@ inductive Page where
   | lists
   | layout
   | drag
+  | colors
   deriving Repr, BEq, Inhabited
 
 def fruits : List String :=
@@ -90,6 +91,10 @@ inductive Msg where
   | share (r : Nat)
   | finish (task : String)
   | reopen (task : String)
+  | paint (c : Color)
+  | ink (c : Color)
+  | inkOpen (b : Bool)
+  | preview (dark : Bool)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -126,6 +131,10 @@ structure Model where
   share : Nat := 350
   todo : List String := ["Write the plan", "Test it", "Ship it"]
   done : List String := []
+  paint : Color := Color.rgb 0x2A 0x6F 0xDB
+  ink : Color := Color.rgba 0xC0 0x30 0x60 200
+  inkOpen : Bool := false
+  previewDark : Bool := true
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
@@ -134,7 +143,8 @@ instance : BEq Model where
     a.align == b.align && a.bold == b.bold && a.quantity.val == b.quantity.val && a.price.val == b.price.val &&
     a.date == b.date && a.time == b.time && a.volume.val == b.volume.val && a.treble.val == b.treble.val &&
     a.bass.val == b.bass.val && a.fruit == b.fruit && a.country == b.country && a.countryOpen == b.countryOpen &&
-    a.color == b.color && a.colorOpen == b.colorOpen && a.share == b.share && a.todo == b.todo && a.done == b.done
+    a.color == b.color && a.colorOpen == b.colorOpen && a.share == b.share && a.todo == b.todo && a.done == b.done &&
+    a.paint == b.paint && a.ink == b.ink && a.inkOpen == b.inkOpen && a.previewDark == b.previewDark
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -210,6 +220,10 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
     if m.todo.contains t then ({ m with todo := m.todo.erase t, done := m.done ++ [t] }, cs) else (m, cs)
   | _, .reopen t => modify fun (m, cs) =>
     if m.done.contains t then ({ m with done := m.done.erase t, todo := m.todo ++ [t] }, cs) else (m, cs)
+  | _, .paint c => modify fun (m, cs) => ({ m with paint := c }, cs)
+  | _, .ink c => modify fun (m, cs) => ({ m with ink := c }, cs)
+  | _, .inkOpen b => modify fun (m, cs) => ({ m with inkOpen := b }, cs)
+  | _, .preview d => modify fun (m, cs) => ({ m with previewDark := d }, cs)
 
 /-- Radio buttons, option buttons, a toggle button and separators. -/
 def choicesPage (m : Model) : Node Msg :=
@@ -266,6 +280,18 @@ def dragPage (m : Model) : Node Msg :=
         Ui.draggable t (Ui.button t .inc) (key := t)) (px 6)
   Ui.row [column "To do" "todo" m.todo .reopen, column "Done" "done" m.done .finish] (px 16)
 
+/-- A color picker, a color popup, a card with a shadow, and a preview in either theme. -/
+def colorsPage (m : Model) : Node Msg :=
+  Ui.col [
+    Ui.colorPicker m.paint .paint (key := "paint"),
+    Ui.row [Ui.label "Ink", Ui.colorPopup m.ink .ink m.inkOpen .inkOpen (alpha := true) (key := "ink"),
+      Ui.label (Widgets.Color.hex m.ink) "inkValue"] (px 8),
+    Ui.row [
+      Ui.boxShadow (Ui.panel (Ui.col [Ui.label "A card" (key := "card"), Ui.label "with a shadow beneath it"])),
+      Ui.col [Ui.toggleButton "Dark preview" m.previewDark .preview "previewToggle",
+        Ui.themeSwitch (if m.previewDark then Theme.dark else Theme.light) (Ui.pad (px 8) (Ui.col [
+          Ui.label "Preview", Ui.button "A button" .inc, Ui.checkbox "A choice" m.agree .agree]))] (px 6)] (px 16)] (px 12)
+
 /-- The first page: what the gallery had before it had tabs. -/
 def basicsPage (m : Model) : Node Msg :=
   Ui.col [
@@ -296,7 +322,8 @@ def view (m : Model) : Node Msg :=
   Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
     Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m),
       ("Inputs", .inputs, inputsPage m), ("Lists", .lists, listsPage m),
-      ("Layout", .layout, layoutPage m), ("Drag", .drag, dragPage m)]] ++
+      ("Layout", .layout, layoutPage m), ("Drag", .drag, dragPage m),
+      ("Colors", .colors, colorsPage m)]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")

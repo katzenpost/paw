@@ -5,11 +5,12 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 import Lean
 
-/-! # Declaration coverage
+/-! # Declaration coverage and axioms
 
 Lists the definitions in `Paw` that no test reaches: a definition is covered when a declaration in
 `Paw.Tests` uses it, directly or through other definitions. Names in `tests/coverage-allow.txt`
-are not listed. -/
+are not listed. It also lists any declaration in `Paw` that depends on an axiom beyond the three
+standard ones, such as `sorryAx`. -/
 
 open Lean
 
@@ -22,11 +23,23 @@ def inLibrary (m : Name) : Bool := (`Paw).isPrefixOf m && !inTests m
 def moduleOf (env : Environment) (n : Name) : Option Name :=
   env.getModuleIdxFor? n |>.bind fun i => env.header.moduleNames[i.toNat]?
 
-/-- Written by hand, not generated for a structure, an inductive, a match or a proof. -/
+/-- Classes whose instances are usually derived. -/
+def derivedClasses : List Name := [``Repr, ``Inhabited, ``DecidableEq, ``Nonempty, ``Hashable]
+
+/-- An instance of a class in `derivedClasses`, or a definition made for one. -/
+def routineInstance (env : Environment) (n : Name) : Bool :=
+  let isRoutine (m : Name) := match env.find? m with
+    | some ci => ci.type.getForallBody.getAppFn.constName?.any derivedClasses.contains
+    | none => false
+  isRoutine n || isRoutine n.getPrefix
+
+/-- Written by hand, not generated for a structure, an inductive, a match, a proof or a derived
+instance. -/
 def handWritten (env : Environment) (n : Name) : Bool :=
   let user := (privateToUserName? n).getD n
   !user.isInternalDetail && !user.hasMacroScopes && !isAuxRecursor env n && !isNoConfusion env n
-    && !(env.isProjectionFn n) && !Meta.isInstanceCore env n
+    && !(env.isProjectionFn n) && !routineInstance env n
+    && !(n.getString! == "ctorIdx" || n.getString! == "noConfusionType")
     && !(Meta.Match.Extension.getMatcherInfo? env n).isSome
 
 def candidates (env : Environment) : Array Name :=
@@ -57,6 +70,20 @@ def allowed : IO (List Name) := do
   let lines := (← IO.FS.readFile path).splitOn "\n" |>.map (·.trimAscii.toString)
   return lines.filter (fun l => !l.isEmpty && !l.startsWith "#") |>.map String.toName
 
+/-- The axioms a proof in `Paw` may use. -/
+def standardAxioms : List Name := [``propext, ``Classical.choice, ``Quot.sound]
+
+/-- Declarations in `Paw` whose proofs use any other axiom, such as `sorryAx`, with it. -/
+def offAxioms (env : Environment) : IO (Array (Name × Name)) := do
+  let names := env.constants.fold (init := #[]) fun acc n _ =>
+    if (moduleOf env n).any inLibrary then acc.push n else acc
+  let ctx : Core.Context := { fileName := "<coverage>", fileMap := default }
+  let (bad, _) ← (names.foldlM (init := #[]) fun acc n => do
+      let axs ← collectAxioms n
+      return acc ++ (axs.filter (!standardAxioms.contains ·)).map (n, ·)
+    : CoreM _).toIO ctx { env }
+  return bad
+
 end Paw.Tests.Coverage
 
 open Paw.Tests.Coverage in
@@ -70,4 +97,7 @@ def main : IO UInt32 := do
   let total := (candidates env).size
   IO.println s!"coverage: {total - missed.size} of {total} definitions reached by tests"
   for n in missed do IO.println s!"  not reached: {n}"
-  return if missed.isEmpty then 0 else 1
+  let bad ← offAxioms env
+  IO.println s!"axioms: {bad.size} declarations use an axiom beyond {standardAxioms}"
+  for (n, a) in bad do IO.println s!"  {n} uses {a}"
+  return if missed.isEmpty && bad.isEmpty then 0 else 1

@@ -4,10 +4,16 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Paw.Tests.Ffi
+import Paw.Tests.Geometry
+import Paw.Tests.Text
+import Paw.Tests.Secret
 
 open Paw.Tests
 
 def main : IO UInt32 := do
   let results ← [
-    ("ffi", Ffi.tests)].mapM fun (n, t) => runSuite n t
+    ("ffi", Ffi.tests),
+    ("geometry", Geometry.tests),
+    ("text", Text.tests),
+    ("secret", Secret.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

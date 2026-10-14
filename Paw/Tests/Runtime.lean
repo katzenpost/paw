@@ -156,6 +156,10 @@ def tests : TestM Unit := do
   let (rt, _) := rt.step (input (.wheel ⟨px 5, px 55⟩ 0 1) 4200) 4200
   checkEq "the wheel bubbles up to a widget that handles it" (before + 1) rt.model.count
   -- Nothing to do: no output.
+  let (_, outs) := rt.step (input (.move ⟨px 5, px 5⟩) 4250) 4250
+  check "a hover change draws" (presents outs == 1)
+  check "but does not resend the accessibility tree"
+    (!(requests outs).any fun | .access .. => true | _ => false)
   let (rt, _) := rt.step (input (.move ⟨px 99, px 99⟩) 4300) 4300
   let (rt, outs) := rt.step (input (.move ⟨px 98, px 98⟩) 4310) 4310
   checkEq "moving over the same empty place draws nothing" 0 outs.length

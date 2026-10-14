@@ -117,12 +117,16 @@ def codecBenches : IO (Array LeanBench.Bench) := do
   let s100 ← IO.mkRef (sceneOf 100)
   let s2000 ← IO.mkRef (sceneOf 2000)
   let bytes2000 ← IO.mkRef (Scene.codec.bytes (sceneOf 2000))
+  -- What Lean decodes in practice: a poll's worth of window events from the Rust layer.
+  let events : List WindowEvent := (List.range 50).map fun (i : Nat) =>
+    .input { kind := if i % 5 == 0 then .text "a" else .move ⟨px (i : Int), px 300⟩, time := i }
+  let eventBytes ← IO.mkRef (Codec.ofBytes ((Codec.list Linux.eventCodec).bytes events))
+  let decoded ← IO.mkRef (none : Option (List WindowEvent))
   let out ← IO.mkRef ByteArray.empty
-  let back ← IO.mkRef (none : Option Scene)
   return #[
     mkBench "codec encode scene 100" "codec" s100 out (fun s => Scene.codec.bytes s),
     mkBench "codec encode scene 2000" "codec" s2000 out (fun s => Scene.codec.bytes s),
-    mkBench "codec decode scene 2000" "codec" bytes2000 back (fun b => Scene.codec.decodeAll (Codec.ofBytes b)),
+    mkBench "codec decode 50 window events" "codec" eventBytes decoded (Codec.list Linux.eventCodec).decodeAll,
     mkBench "ffi scene echo 2000" "codec" bytes2000 out Ffi.sceneEcho]
 
 def items (n : Nat) : List Item :=

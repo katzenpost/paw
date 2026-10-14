@@ -104,8 +104,10 @@ def present (rt : Runtime app) : Output app.Msg :=
 def accessOut (rt : Runtime app) : Output app.Msg :=
   .request (.access ((rt.router.focused.map (·.n)).getD 0) (rt.tree.accessTree rt.env))
 
-/-- A new frame: the scene, and the tree for assistive technology. -/
-def frame (rt : Runtime app) : List (Output app.Msg) := [rt.present, rt.accessOut]
+/-- A new frame: the scene, and the tree for assistive technology if it may have changed. That
+tree does not depend on hover or press, so a frame for those alone leaves it out. -/
+def frame (rt : Runtime app) (access : Bool := true) : List (Output app.Msg) :=
+  if access then [rt.present, rt.accessOut] else [rt.present]
 
 /-- `update` on one message: the runtime with the new model, and the commands' outputs. -/
 def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List (Output app.Msg) :=
@@ -146,13 +148,18 @@ def rebuild (rt : Runtime app) : Runtime app × List (Output app.Msg) :=
   let (rt, outs) := { rt with tree, nextId }.applyReqs .other reqs
   (rt.layout, outs)
 
-/-- After handling something: rebuild if the model changed, and draw if anything did. -/
-def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List (Output app.Msg)) :
-    Runtime app × List (Output app.Msg) :=
+/-- After handling something: rebuild if the model changed, and draw if anything did. `access`
+says whether the tree for assistive technology may have changed short of a rebuild: a widget's
+state, or focus. -/
+def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List (Output app.Msg))
+    (access : Bool := true) : Runtime app × List (Output app.Msg) :=
   let wasUpdated := rt.updated
   let rt := { rt with updated := false }
   if !wasUpdated || rt.model == before then
-    if changed then (rt.layout, outs ++ rt.layout.frame) else (rt, outs)
+    if changed then
+      let rt := rt.layout
+      (rt, outs ++ rt.frame access)
+    else (rt, outs)
   else
     let (rt, outs') := rt.rebuild
     (rt, outs ++ outs' ++ rt.frame)
@@ -172,12 +179,12 @@ def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List
   | .input i =>
     let before := rt.model
     let (router, ds) := rt.router.route rt.tree i
-    let moved := router.focused != rt.router.focused || router.hovered != rt.router.hovered ||
-      router.pressed != rt.router.pressed
+    let focusMoved := router.focused != rt.router.focused
+    let moved := focusMoved || router.hovered != rt.router.hovered || router.pressed != rt.router.pressed
     let (rt, outs, handled) := ds.foldl
       (fun (rt, outs, h) d => let (rt, o, h') := rt.deliver d; (rt, outs ++ o, h || h'))
       ({ rt with router }, [], false)
-    rt.settle before (moved || handled) outs
+    rt.settle before (moved || handled) outs (access := focusMoved || handled)
   | .resize w h =>
     let rt := { rt with window := Rect.ofXYWH rt.window.x0 rt.window.y0 w h }.layout
     (rt, rt.frame)

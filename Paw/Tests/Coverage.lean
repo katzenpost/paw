@@ -24,7 +24,8 @@ def moduleOf (env : Environment) (n : Name) : Option Name :=
   env.getModuleIdxFor? n |>.bind fun i => env.header.moduleNames[i.toNat]?
 
 /-- Classes whose instances are usually derived. -/
-def derivedClasses : List Name := [``Repr, ``Inhabited, ``DecidableEq, ``Nonempty, ``Hashable]
+def derivedClasses : List Name :=
+  [``Repr, ``Inhabited, ``DecidableEq, ``Nonempty, ``Hashable, ``Ord, ``TypeName]
 
 /-- An instance of a class in `derivedClasses`, or a definition made for one. -/
 def routineInstance (env : Environment) (n : Name) : Bool :=
@@ -39,7 +40,8 @@ def handWritten (env : Environment) (n : Name) : Bool :=
   let user := (privateToUserName? n).getD n
   let generated := user.components.any fun c =>
     let c := c.toString
-    c.startsWith "match_" || c.startsWith "proof_" || c == "splitter"
+    c.startsWith "match_" || c.startsWith "proof_" || c == "splitter" || c.startsWith "brecOn" ||
+      c.startsWith "below"
   !generated && !user.isInternalDetail && !user.hasMacroScopes && !isAuxRecursor env n && !isNoConfusion env n
     && !(env.isProjectionFn n) && !routineInstance env n
     && !["ctorIdx", "noConfusionType", "ctorElimType", "toCtorIdx", "ofNat"].contains n.getString!
@@ -65,6 +67,11 @@ def reached (env : Environment) : NameSet := Id.run do
     if let some ci := env.find? n then
       for m in ci.getUsedConstantsAsSet do
         if !seen.contains m then todo := todo.push m
+      -- A definition by mutual recursion is compiled through its block, so reaching one member
+      -- reaches them all.
+      if let .defnInfo d := ci then
+        for m in d.all do
+          if !seen.contains m then todo := todo.push m
   return seen
 
 def allowed : IO (List Name) := do
@@ -78,8 +85,11 @@ def standardAxioms : List Name := [``propext, ``Classical.choice, ``Quot.sound]
 
 /-- Declarations in `Paw` whose proofs use any other axiom, such as `sorryAx`, with it. -/
 def offAxioms (env : Environment) : IO (Array (Name × Name)) := do
-  let names := env.constants.fold (init := #[]) fun acc n _ =>
-    if (moduleOf env n).any inLibrary then acc.push n else acc
+  -- Lean's own `deriving TypeName` uses the compiler's `lcProof`; it is not a proof of ours.
+  let names := env.constants.fold (init := #[]) fun acc n ci =>
+    if (moduleOf env n).any inLibrary && ci.type.getAppFn.constName? != some ``TypeName then
+      acc.push n
+    else acc
   let ctx : Core.Context := { fileName := "<coverage>", fileMap := default }
   let (bad, _) ← (names.foldlM (init := #[]) fun acc n => do
       let axs ← collectAxioms n

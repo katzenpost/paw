@@ -73,12 +73,12 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 
 | Concept | In monomer | In Paw |
 | --- | --- | --- |
-| Widget interface | `Widget s e`, a record of init, merge, dispose, event and message handling, size request, resize, render (`Core/WidgetTypes.hs`) | The same record, with law fields and a pure render |
-| Three layers | `Single` for leaves, `Container` for children, `Composite` for model and handler; `startApp` is a Composite at the root | The same; an app is a component at the root |
+| Widget interface | `Widget s e`, a record of init, merge, dispose, event and message handling, size request, resize, render (`Core/WidgetTypes.hs`) | The same record over the widget's own state, with law fields and a pure render; it never sees the tree |
+| Leaves and containers | `Single` for leaves, `Container` for children | A leaf is a `Widget`; a container is a `Layout` with children |
 | Effects as data | Every operation returns a node and a list of `WidgetRequest`s | Operations return a node and a list of `Cmd`s, typed by capability and origin |
-| Rebuild and merge | The view is rebuilt from the model; `mergeChildSeq` pairs old and new children by position, then by key; unmatched new ones are initialized, unmatched old ones disposed (`Widgets/Container.hs`) | The same algorithm, with keys of the app's own type and unique among siblings |
-| Skipping unchanged components | A Composite rebuilds only when its model changed (`mergeRequired`) | The same; models need `BEq` |
-| Identity | `Path` (child indices), `WidgetKey` (user text), `WidgetId` (creation time and path), with a runtime table from id to current path | `Path` and `WidgetId` as in monomer; keys are `ObjId`s assigned by the app |
+| Rebuild and merge | The view is rebuilt from the model; `mergeChildSeq` pairs old and new children by position, then by key; unmatched new ones are initialized, unmatched old ones disposed (`Widgets/Container.hs`) | The same algorithm, with keys unique among siblings; an old child no new child merged with is disposed |
+| Skipping unchanged views | A Composite rebuilds only when its model changed (`mergeRequired`) | The view is rebuilt only when the model changed; models need `BEq` |
+| Identity | `Path` (child indices), `WidgetKey` (user text), `WidgetId` (creation time and path), with a runtime table from id to current path | `Path` as in monomer; a `WidgetId` is a number given when a node joins the tree and kept through merges |
 | Layout | `SizeReq {fixed, flex, extra, factor}` per axis; `assignStackAreas` gives fixed sizes, shrinks flex in proportion, then shares extra space by factor (`Widgets/Containers/Stack.hs`) | The same algorithm over integers, with its laws proved |
 | Event routing | Keys, text and clipboard go to the focused path; press, move and wheel go to the widget under the point; overlays become the root for hit-testing; a `Click` needs press and release on the same widget (`Main/Handlers.hs`) | The same, plus the checks from the security guidelines before a designation is made |
 | Rendering | Only on request: input, `RenderOnce`, `RenderEvery`; overlays drawn after the main pass | The same; the Scene is sent to Rust only when a render is needed |
@@ -93,16 +93,18 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | Clipping is opt-in (`singleUseScissor = False`) | Every widget has a law that its Scene lies within its box | Text and images from elsewhere cannot draw over neighbours |
 | One `WidgetRequest` type where any widget can run IO or write the clipboard | `Cmd caps origin`: effects need a capability and a designation | Authority follows the user's choice and the component's declared capabilities |
 | Task results and input arrive as the same event type | Messages arrive with an `Origin` | The rule "effects come from user actions" becomes a type |
-| `WidgetKey` is any `Text`, and duplicates are undefined | Keys are `ObjId`s, unique among siblings by a proof | Content cannot choose a key that takes over another widget's state |
-| `Typeable` and `cast` for widget state and messages | Typed messages mapped between components; widget state through `Dynamic`, compared only after widget types match | Lean's types replace runtime casts where possible |
-| Lenses into the parent model | A `Field σ α` structure with get and set and the lens laws as fields | Same pattern as the other laws |
+| `WidgetKey` is any `Text`, and duplicates are undefined | Keys are strings, and a key a sibling before already has is dropped, with a proof that keys are then unique | Content cannot choose a key that takes over another widget's state |
+| Widget functions receive their node, and containers call their children's functions | Widget functions receive only their own state and box; `Paw.Tree` merges, lays out and draws children | Lean only accepts a node type that holds widgets if widgets do not take nodes as arguments; a widget also cannot act outside its own box |
+| `Typeable` and `cast` for widget state and messages | One message type for the whole tree; widget state carried across a merge through `Dynamic`, only between widgets of the same kind | Lean's types replace runtime casts where possible |
+| `Composite`: components with their own model and handler inside the tree | Elm's way: one model and one `update` at the root; a component is a view function and an update function with their own message type, mapped into the parent's | A tree whose message type changes inside it is an inductive family Lean would place in a higher universe with no gain; mapping keeps one message type |
+| Lenses into the model for widget values | Widgets take values and report changes as messages, as in Elm | One direction for data to flow |
 | SDL2 and NanoVG through OpenGL | The Rust layer above | Wayland, Android and accessibility support |
 | A stack that lacks room places children past its box, for the parent to fix | Children are cut at the box's edge | `assign_within` holds for every layout; a scroll is how content larger than its box is shown |
 | Shrinking flexible sizes in one pass, clamped at zero, so a child weighted to give up more than it has leaves the rest overflowing | Shrinking in rounds: what one child cannot give, the others give next round | Children fit whenever their rigid sizes do; a random test checks it |
 
 ## Laws in types
 
-The definitions in this section are taken from a sketch that typechecks with Lean 4.33.1, using no axioms beyond `propext`, `Classical.choice` and `Quot.sound`.
+The definitions in this section are taken from the library, shortened where marked. `make coverage` checks that no declaration in the library uses an axiom beyond `propext`, `Classical.choice` and `Quot.sound`.
 
 ### Geometry
 
@@ -157,8 +159,9 @@ A Scene is a list of draw items, each with the clip it is drawn under:
 
 ```lean
 inductive Draw where
-  | fill (r : Rect) (rgba : UInt32)
-  | text (x y : Int) (t : SafeText)
+  | fill (r : Rect) (c : Color) (radius : Int)
+  | stroke (r : Rect) (c : Color) (width : Int) (radius : Int)
+  | text (at_ : Point) (t : SafeText) (style : TextStyle)
 
 structure Scene where
   items : List (Rect × Draw)
@@ -174,36 +177,32 @@ A leaf widget whose drawing depends on content, such as a label or an image, end
 
 ### Widgets and layouts compose their laws
 
+A leaf is a `Widget`, whose render carries its law. A container is a `Layout` with children. `Paw.Tree` draws a node as its widget's scene followed by its children's, clipped to the node's box (shortened):
+
 ```lean
-structure Widget where
-  sizeReq : SizeReq × SizeReq
-  render : Rect → Scene
-  render_within : ∀ v, (render v).Within v
+structure Widget (Msg : Type) where
+  kind : String
+  State : Type
+  render : Env → State → Rect → Scene
+  render_within : ∀ env st v, (render env st v).Within v
+  -- …
 
-structure Layout where
-  assign : Rect → List (SizeReq × SizeReq) → List Rect
-  assign_length : ∀ v rs, (assign v rs).length = rs.length
-  assign_within : ∀ v rs, ∀ r ∈ assign v rs, r.Within v
+def Node.render (env : Env) : Node Msg → Scene
+  | mk w st i _ cs =>
+    if i.visible then w.render env st i.viewport ++ (renderList env cs).clip i.viewport
+    else Scene.empty
 
-def Layout.render (l : Layout) (kids : List Widget) (v : Rect) : Scene :=
-  ⟨((kids.zip (l.assign v (kids.map (·.sizeReq)))).map fun (w, r) => (w.render r).items).flatten⟩
-
-theorem Layout.render_within (l : Layout) (kids : List Widget) (v : Rect) :
-    (l.render kids v).Within v := by
-  intro i hi
-  simp only [Layout.render, List.mem_flatten, List.mem_map] at hi
-  obtain ⟨_, ⟨⟨w, r⟩, hwr, rfl⟩, hi⟩ := hi
-  exact (w.render_within r i hi).trans (l.assign_within v _ r (List.of_mem_zip hwr).2)
-
-def Layout.container (l : Layout) (req : SizeReq × SizeReq) (kids : List Widget) : Widget where
-  sizeReq := req
-  render := l.render kids
-  render_within := l.render_within kids
+theorem Node.render_within (env : Env) (n : Node Msg) : (n.render env).Within n.viewport := by
+  rcases n with ⟨w, st, i, l, cs⟩
+  · simp only [render, viewport, info]
+    split
+    · exact Scene.append_within (w.render_within env st i.viewport) (Scene.clip_within _ _)
+    · exact Scene.empty_within _
 ```
 
-This is the `kemOfNike` pattern. `Layout.container` builds a `Widget` from a layout and any children, and fills `render_within` from the children's `render_within` and the layout's `assign_within`, joined by transitivity. A stack of grids of labels is clipped to the window because each part is, and nobody writes that proof for the stack, the grid or the app.
+This is the `kemOfNike` pattern. A tree's law comes from its widgets' `render_within` and the `Scene` laws, so a stack of grids of labels draws within the window because each part does, and nobody writes that proof for the stack, the grid or the app. The proof needs no induction over the tree, because each node clips its children. The layout laws make that clip remove nothing: `assign_within` places every child inside its parent.
 
-The full `Widget` record also has monomer's merge, event, message and dispose functions. The law fields grow with it:
+The full `Widget` record also has monomer's merge, event and dispose functions. The laws, of `Widget` and of the structures around it:
 
 | Structure | Law | Guideline it enforces |
 | --- | --- | --- |
@@ -212,8 +211,7 @@ The full `Widget` record also has monomer's merge, event, message and dispose fu
 | `Layout` for stack and grid | `assign_disjoint`: children's boxes do not overlap | Reserved regions cannot be covered by a sibling |
 | `Widget` | `hit_agrees`: the widget hit-testing returns at a point is the topmost one whose Scene covers it | The user clicks what they see |
 | `Widget` | `focus_valid`: focus moves only to visible, enabled, focusable widgets | Focus is the user's |
-| `Merge` | `merge_types`: merge pairs only widgets of the same type, and keys only with equal keys | State is never handed to another widget |
-| `Field σ α` | `get_set`, `set_get`, `set_set` | Updates through a field change only that field |
+| `Node` | keys unique among siblings, by `dedupKeys_nodup` | State is never handed to another widget |
 
 Stacks and grids prove `assign_disjoint` once, between them. Each is an `Axial` layout that only decides a size per child along its axis. `Axial.toSeparated` places those sizes one after another and proves all three laws from a lemma about the placement. A new layout along one axis gets the laws by supplying its size function and a proof that it returns one size per child.
 
@@ -286,13 +284,18 @@ Handlers are written in `do` notation with `modify`, `get` and `emit`. Propertie
 
 ### Keys
 
+A node's constructor is private. The constructors the library offers drop a key a sibling before already has:
+
 ```lean
-structure Children (α : Type) where
-  nodes : List (Option ObjId × α)
-  keys_nodup : (nodes.filterMap (·.1)).Nodup
+def Node.container (l : Layout) (children : List (Node Msg)) (key : Option String := none) :
+    Node Msg :=
+  mk (Widget.container l.name) ({} : NoState) { key } (some l) (dedupKeys [] children)
+
+theorem Node.dedupKeys_nodup (cs : List (Node Msg)) :
+    ((dedupKeys [] cs).filterMap (·.key)).Nodup
 ```
 
-Keys are the app's own identifiers, never text from elsewhere, and duplicates among siblings do not typecheck. `decide` proves `keys_nodup` for literal lists. A view built from a model collection gets the proof from the collection's own invariant, such as a map's keys being unique.
+So text from elsewhere may be used as a key: a message's id, say. Two siblings never share a key, so a message cannot take over another's state by claiming its id. At worst it loses its own key and merges by position.
 
 ### Secrets
 

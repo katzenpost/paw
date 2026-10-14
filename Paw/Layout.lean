@@ -77,6 +77,8 @@ structure Item where
   deriving Repr, DecidableEq, Inhabited
 
 structure Layout where
+  /-- A container merges only with a container of the same layout. -/
+  name : String
   assign : Rect → List Item → List Rect
   assign_length : ∀ v items, (assign v items).length = items.length
   assign_within : ∀ v items, ∀ r ∈ assign v items, r.Within v
@@ -166,6 +168,7 @@ theorem gaps_length (s : Nat) (seen : Bool) (items : List Item) :
 /-- A layout along one axis: it decides a size per child, from the length available after
 spacing, and the children are placed one after another. -/
 structure Axial where
+  name : String
   axis : Axis
   spacing : Nat
   sizes : Nat → List Item → List Nat
@@ -199,6 +202,7 @@ theorem assign_disjoint (a : Axial) (v : Rect) (items : List Item) :
   exact List.Pairwise.map _ (fun _ _ h => a.axis.span_disjoint v h) (place_pairwise _ _)
 
 def toSeparated (a : Axial) : SeparatedLayout where
+  name := a.name
   assign := a.assign
   assign_length := a.assign_length
   assign_within := a.assign_within
@@ -260,6 +264,7 @@ def gridSizes (main : Nat) (items : List Item) : List Nat :=
 
 def stack (axis : Axis) (spacing : Int := 0) : SeparatedLayout :=
   Axial.toSeparated {
+    name := match axis with | .horizontal => "hstack" | .vertical => "vstack"
     axis
     spacing := spacing.toNat
     sizes := fun m items => stackSizes m (items.map fun i => (axis.main i, i.visible))
@@ -272,6 +277,7 @@ def stack (axis : Axis) (spacing : Int := 0) : SeparatedLayout :=
 
 def grid (axis : Axis) (spacing : Int := 0) : SeparatedLayout :=
   Axial.toSeparated {
+    name := match axis with | .horizontal => "hgrid" | .vertical => "vgrid"
     axis
     spacing := spacing.toNat
     sizes := gridSizes
@@ -300,6 +306,7 @@ def vgrid (spacing : Int := 0) : SeparatedLayout := grid .vertical spacing
 /-- Children on top of each other, each given the whole box. Children overlap, so this is not a
 `SeparatedLayout`. -/
 def zstack : Layout where
+  name := "zstack"
   assign := fun v items => items.map fun _ => v
   assign_length := by simp
   assign_within := by
@@ -335,6 +342,7 @@ def alignSpan (lo hi : Int) (want : Nat) (at_ : Nat) : Int × Int :=
 
 /-- Each child placed in the box by its size request and the alignment. -/
 def box (cfg : BoxCfg) : Layout where
+  name := "box"
   assign := fun v items => items.map fun i =>
     if cfg.expand then v
     else

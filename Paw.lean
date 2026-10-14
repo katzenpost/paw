@@ -10,3 +10,6 @@ import Paw.Secret
 import Paw.Codec
 import Paw.Scene
 import Paw.Layout
+import Paw.Event
+import Paw.Widget
+import Paw.Tree

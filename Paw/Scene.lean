@@ -112,7 +112,18 @@ theorem roundtrip (d : Draw) (rest : List UInt8) : dec (enc d ++ rest) = some (d
       pointCodec.roundtrip, Color.codec.roundtrip, Codec.int.roundtrip, SafeText.codec.roundtrip,
       TextStyle.codec.roundtrip]
 
-def codec : Codec Draw := ⟨enc, dec, roundtrip⟩
+/-- `enc` written straight into bytes. -/
+def put (d : Draw) (b : ByteArray) : ByteArray :=
+  match d with
+  | .fill r c radius => Codec.int.put radius (Color.codec.put c (rectCodec.put r (Codec.nat.put 0 b)))
+  | .stroke r c w radius =>
+    Codec.int.put radius (Codec.int.put w (Color.codec.put c (rectCodec.put r (Codec.nat.put 1 b))))
+  | .text p t s => TextStyle.codec.put s (SafeText.codec.put t (pointCodec.put p (Codec.nat.put 2 b)))
+
+theorem put_spec (d : Draw) (b : ByteArray) : (put d b).data.toList = b.data.toList ++ enc d := by
+  cases d <;> simp [put, enc, Codec.put_spec, List.append_assoc]
+
+def codec : Codec Draw := { enc, dec, roundtrip, put, put_spec }
 
 end Draw
 

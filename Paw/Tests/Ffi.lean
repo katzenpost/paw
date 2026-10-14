@@ -70,7 +70,7 @@ def randomScene (g : Rng) : Scene × Rng := Id.run do
   return (Scene.ofList items, g)
 
 def echoes (s : Scene) : Bool :=
-  let bytes := Codec.toBytes (Scene.codec.enc s)
+  let bytes := Scene.codec.bytes s
   Ffi.sceneEcho bytes == bytes
 
 def tests : TestM Unit := do

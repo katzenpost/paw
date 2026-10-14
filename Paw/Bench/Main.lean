@@ -116,12 +116,12 @@ def sceneOf (n : Nat) : Scene :=
 def codecBenches : IO (Array LeanBench.Bench) := do
   let s100 ← IO.mkRef (sceneOf 100)
   let s2000 ← IO.mkRef (sceneOf 2000)
-  let bytes2000 ← IO.mkRef (Codec.toBytes (Scene.codec.enc (sceneOf 2000)))
+  let bytes2000 ← IO.mkRef (Scene.codec.bytes (sceneOf 2000))
   let out ← IO.mkRef ByteArray.empty
   let back ← IO.mkRef (none : Option Scene)
   return #[
-    mkBench "codec encode scene 100" "codec" s100 out (fun s => Codec.toBytes (Scene.codec.enc s)),
-    mkBench "codec encode scene 2000" "codec" s2000 out (fun s => Codec.toBytes (Scene.codec.enc s)),
+    mkBench "codec encode scene 100" "codec" s100 out (fun s => Scene.codec.bytes s),
+    mkBench "codec encode scene 2000" "codec" s2000 out (fun s => Scene.codec.bytes s),
     mkBench "codec decode scene 2000" "codec" bytes2000 back (fun b => Scene.codec.decodeAll (Codec.ofBytes b)),
     mkBench "ffi scene echo 2000" "codec" bytes2000 out Ffi.sceneEcho]
 
@@ -146,6 +146,8 @@ def treeBenches : IO (Array LeanBench.Bench) := do
   let m1000 ← IO.mkRef (model 1000)
   let t100 ← IO.mkRef (built 100)
   let t1000 ← IO.mkRef (built 1000)
+  -- A window tall enough to show every one of 1000 rows: the most drawing a frame can need.
+  let tall ← IO.mkRef ((((view (model 1000)).resolve none).init 1).1.resize env (Rect.ofXYWH 0 0 (px 800) (px 40000)))
   let next1000 ← IO.mkRef (model 1000 |>.items |>.drop 1 |> fun items => ({ items } : Model))
   let node ← IO.mkRef (default : Node Msg)
   let scene ← IO.mkRef Scene.empty
@@ -157,6 +159,7 @@ def treeBenches : IO (Array LeanBench.Bench) := do
     mkBench "tree resize 1000" "tree" t1000 node (·.resize env v),
     mkBench "tree render 100" "tree" t100 scene (·.render env),
     mkBench "tree render 1000" "tree" t1000 scene (·.render env),
+    mkBench "tree render 1000, all visible" "tree" tall scene (·.render env),
     { name := "tree merge 1000 after removing one", config := cfg "tree"
       action := do
         let old ← t1000.get

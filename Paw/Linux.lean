@@ -45,7 +45,7 @@ def keyDec (bs : List UInt8) : Option (Key × List UInt8) := do
 theorem key_roundtrip (k : Key) (rest : List UInt8) : keyDec (keyEnc k ++ rest) = some (k, rest) := by
   cases k <;> simp [keyEnc, keyDec, keyTag, List.append_assoc, nat.roundtrip, char.roundtrip]
 
-def keyCodec : Codec Key := ⟨keyEnc, keyDec, key_roundtrip⟩
+def keyCodec : Codec Key := { enc := keyEnc, dec := keyDec, roundtrip := key_roundtrip }
 
 def modsCodec : Codec Mods :=
   (pair (pair bool bool) (pair bool bool)).map (fun ((a, b), (c, d)) => ⟨a, b, c, d⟩)
@@ -87,7 +87,7 @@ theorem kind_roundtrip (k : InputKind) (rest : List UInt8) : kindDec (kindEnc k 
     mouseButtonCodec.roundtrip, int.roundtrip, keyCodec.roundtrip, modsCodec.roundtrip,
     bool.roundtrip, string.roundtrip]
 
-def kindCodec : Codec InputKind := ⟨kindEnc, kindDec, kind_roundtrip⟩
+def kindCodec : Codec InputKind := { enc := kindEnc, dec := kindDec, roundtrip := kind_roundtrip }
 
 def inputCodec : Codec Input :=
   (pair kindCodec (pair nat (pair bool bool))).map (fun (k, t, s, o) => ⟨k, t, s, o⟩)
@@ -120,7 +120,7 @@ theorem event_roundtrip (e : WindowEvent) (rest : List UInt8) :
   cases e <;> simp [eventEnc, eventDec, List.append_assoc, nat.roundtrip, inputCodec.roundtrip,
     int.roundtrip, accessActionCodec.roundtrip]
 
-def eventCodec : Codec WindowEvent := ⟨eventEnc, eventDec, event_roundtrip⟩
+def eventCodec : Codec WindowEvent := { enc := eventEnc, dec := eventDec, roundtrip := event_roundtrip }
 
 def roleTag : Role → Nat
   | .label => 0 | .button => 1 | .checkBox => 2 | .textInput => 3 | .passwordInput => 4
@@ -152,7 +152,7 @@ def measure (style : TextStyle) (t : SafeText) : Int × Int :=
 
 /-- A scene drawn offscreen as PNG, `w` × `h` pixels at `scale`/1000 pixels per logical pixel. -/
 def renderPng (s : Scene) (w h : Nat) (scale : Nat := 1000) : ByteArray :=
-  Ffi.renderPng (toBytes (Scene.codec.enc s)) w.toUInt32 h.toUInt32 scale.toUInt32
+  Ffi.renderPng (Scene.codec.bytes s) w.toUInt32 h.toUInt32 scale.toUInt32
 
 /-- The window the Rust layer opened, as the runtime's platform. -/
 def platform : Platform where
@@ -165,7 +165,7 @@ def platform : Platform where
     return ((pair int int).decodeAll (ofBytes b)).getD (px 800, px 600)
   measure := measure
   perform := fun r => match r with
-    | .present s => Ffi.windowPresent (toBytes (Scene.codec.enc s))
+    | .present s => Ffi.windowPresent (Scene.codec.bytes s)
     | r => match requestEnc r with
       | some bytes => Ffi.windowRequest (toBytes bytes)
       | none => pure ()

@@ -36,6 +36,49 @@ def listItem {Msg : Type} (caption : SafeText) (chosen : Bool) (onPick : List Ms
       | _ => none
     access := fun _ _ => some { role := .listItem, name := caption, checked := some chosen } }
 
+/-- A row of a select list built from any node, chosen or not, asking for `onPick` when clicked
+anywhere in it: chosen, it is drawn on the theme's selection color, hovered on the hover color,
+and otherwise on nothing, so that a list on a panel shows the panel. `name` is what assistive
+technology reads for it. -/
+def listRow {Msg : Type} (name : SafeText) (chosen : Bool) (onPick : List Msg) : Widget Msg :=
+  Widget.Spec.build (σ := NoState) {
+    kind := "listRow"
+    init := {}
+    sizeReq := fun _ _ => ({}, {})
+    render := fun env _ v =>
+      let t := env.theme
+      if chosen then Scene.inBox v [.fill v t.selection (px 4)]
+      else if env.isHovered then Scene.inBox v [.fill v (t.toggle.current { hovered := true }).bg (px 4)]
+      else Scene.empty
+    render_within := fun env _ v => by
+      split
+      · exact Scene.inBox_within v _
+      · split
+        · exact Scene.inBox_within v _
+        · exact Scene.empty_within v
+    handle := fun _ st _ e => match e with
+      | .click .. => some (st, onPick.map .emit)
+      | .enter _ | .leave _ | .press .. | .release .. => some (st, [])
+      | _ => none
+    access := fun _ _ => some { role := .listItem, name, checked := some chosen } }
+
+/-- A row's content, inset as a list item's caption is: eight pixels at the sides, four above and
+below, so that a row of one line of text is a select list's row height. -/
+def listRowLayout : Layout where
+  name := "listRow"
+  assign := fun v items => items.map fun _ => (v.shrink (px 8) (px 4) (px 8) (px 4)).inter v
+  assign_length := by simp
+  assign_within := by
+    intro v items r h
+    simp only [List.mem_map] at h
+    obtain ⟨_, -, rfl⟩ := h
+    exact Rect.inter_within _ _
+  sizeReq := fun items =>
+    let vis := items.filter (·.visible)
+    let add (r : SizeReq) (p : Int) := { r with fixed := r.fixed + 2 * p.toNat }
+    (add (SizeReq.mergeAll SizeReq.mergeMax (vis.map (·.w))) (px 8),
+     add (SizeReq.mergeAll SizeReq.mergeMax (vis.map (·.h))) (px 4))
+
 /-- The height of a row of a select list. -/
 def rowHeight (env : Env) : Int :=
   (env.measure (textStyle env) (SafeText.trusted "M")).2 + 2 * env.theme.toggle.padding.2
@@ -50,9 +93,12 @@ def listLayout (rows : Nat) : Layout :=
       ({ (mergeAll mergeMax (items.map (·.w))) with fixed := (mergeAll mergeMax (items.map (·.w))).fixed + (gutter + px 2).toNat },
        fixedSize ((shown.map fun i => i.h.fixed + i.h.flex).sum + (px 2).toNat)) }
 
-/-- What holds a select list's rows: a framed box that scrolls them, and chooses by keys. There
-are `count` rows, `chosen` is the index of the one chosen, and `pick i` asks for the `i`th. -/
-def selectListBox {Msg : Type} (count : Nat) (chosen : Option Nat) (pick : Nat → List Msg) : Widget Msg :=
+/-- What holds a select list's rows: a box that scrolls them, and chooses by keys. There are
+`count` rows, `chosen` is the index of the one chosen, and `pick i` asks for the `i`th. Unless
+`framed`, the box is drawn only while it has focus, so that a list in a sidebar sits on the
+sidebar. -/
+def selectListBox {Msg : Type} (count : Nat) (chosen : Option Nat) (pick : Nat → List Msg)
+    (framed : Bool := true) : Widget Msg :=
   Widget.Spec.build (σ := ScrollState) {
     kind := "selectList"
     init := {}
@@ -71,7 +117,9 @@ def selectListBox {Msg : Type} (count : Nat) (chosen : Option Nat) (pick : Nat �
           let thumbH := max (px 16) (inner.height * inner.height / ch)
           let y := inner.y0 + (inner.y0 - env.content.y0) * (inner.height - thumbH) / max 1 (ch - inner.height)
           [Draw.fill (Rect.ofXYWH (inner.x1 - gutter + px 2) y (gutter - px 4) thumbH) t.border (px 2)]
-      Scene.inBox v ([.fill v s.bg (px 3), .stroke v s.border s.borderWidth (px 3)] ++ bar)
+      let box := if framed then [.fill v s.bg (px 3), .stroke v s.border s.borderWidth (px 3)]
+        else if env.isFocused then [.stroke v s.border s.borderWidth (px 3)] else []
+      Scene.inBox v (box ++ bar)
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun env st v e =>
       let rh := rowHeight env

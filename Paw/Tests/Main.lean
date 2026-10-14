@@ -31,6 +31,7 @@ import Paw.Tests.Split
 import Paw.Tests.Drag
 import Paw.Tests.Color
 import Paw.Tests.Follow
+import Paw.Tests.Styles
 
 open Paw.Tests
 
@@ -64,5 +65,6 @@ def main : IO UInt32 := do
     ("link", Link.tests),
     ("drag", Drag.tests),
     ("color", Color.tests),
-    ("follow", Follow.tests)].mapM fun (n, t) => runSuite n t
+    ("follow", Follow.tests),
+    ("styles", Styles.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

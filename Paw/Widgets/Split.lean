@@ -68,10 +68,15 @@ def splitWidget {Msg : Type} (vertical : Bool) (ratio : Nat) (onResize : Nat →
     render := fun env _ v =>
       let d := dividerRect vertical ratio v
       let t := env.theme
-      let c := if env.isFocused then t.accent else if env.isHovered || env.isPressed then t.text else t.border
+      -- A thin line between the two, its whole length; the grip only while the divider is
+      -- hovered, dragged or focused, so that a split at rest is only the line.
+      let line := if vertical then Rect.ofXYWH d.x0 (d.y0 + d.height / 2) d.width (px 1)
+        else Rect.ofXYWH (d.x0 + d.width / 2) d.y0 (px 1) d.height
       let grip := if vertical then Rect.ofXYWH (d.x0 + d.width / 2 - px 12) (d.y0 + d.height / 2 - px 1) (px 24) (px 2)
         else Rect.ofXYWH (d.x0 + d.width / 2 - px 1) (d.y0 + d.height / 2 - px 12) (px 2) (px 24)
-      Scene.inBox v [.fill grip c (px 1)]
+      let c := if env.isFocused then t.accent else t.text
+      Scene.inBox v ([.fill line t.divider 0] ++
+        (if env.isFocused || env.isHovered || env.isPressed then [.fill grip c (px 1)] else []))
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun env st v e => match e with
       | .press p .primary => if (dividerRect vertical ratio v).contains p then some ({ dragging := true }, []) else none

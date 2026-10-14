@@ -2,7 +2,8 @@ import Lake
 open Lake DSL System
 
 package paw where
-  leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩]
+  leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩,
+    ⟨`warningAsError, true⟩]
 
 require LeanBench from git
   "https://github.com/alok/LeanBench" @ "250d2a892bf8c91ec3ae5de8517793e18379f97b"

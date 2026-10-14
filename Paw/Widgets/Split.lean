@@ -27,14 +27,22 @@ def dividerRect (vertical : Bool) (ratio : Nat) (v : Rect) : Rect :=
   if vertical then Rect.ofXYWH v.x0 (v.y0 + firstLength v.height ratio) v.width dividerWidth
   else Rect.ofXYWH (v.x0 + firstLength v.width ratio) v.y0 dividerWidth v.height
 
-/-- The first child before the divider, the second after it; any more get nothing. Each is cut to
-the box. -/
+/-- Where the divider's line is drawn, a pixel thick, in the middle of the divider: the children
+meet it on each side, so that nothing of the window shows between a pane and the line. -/
+def dividerLine (vertical : Bool) (ratio : Nat) (v : Rect) : Rect :=
+  let d := dividerRect vertical ratio v
+  if vertical then Rect.ofXYWH d.x0 (d.y0 + d.height / 2) d.width (px 1)
+  else Rect.ofXYWH (d.x0 + d.width / 2) d.y0 (px 1) d.height
+
+/-- The first child up to the divider's line, the second after it; any more get nothing. Each is
+cut to the box. The divider's grip area overlaps the children's edges, and a press there that a
+child does not handle reaches the split. -/
 def splitLayout (vertical : Bool) (ratio : Nat) : Layout where
   name := if vertical then "vsplit" else "hsplit"
   assign := fun v items =>
-    let d := dividerRect vertical ratio v
-    let first : Rect := if vertical then ⟨v.x0, v.y0, v.x1, d.y0⟩ else ⟨v.x0, v.y0, d.x0, v.y1⟩
-    let second : Rect := if vertical then ⟨v.x0, d.y1, v.x1, v.y1⟩ else ⟨d.x1, v.y0, v.x1, v.y1⟩
+    let l := dividerLine vertical ratio v
+    let first : Rect := if vertical then ⟨v.x0, v.y0, v.x1, l.y0⟩ else ⟨v.x0, v.y0, l.x0, v.y1⟩
+    let second : Rect := if vertical then ⟨v.x0, l.y1, v.x1, v.y1⟩ else ⟨l.x1, v.y0, v.x1, v.y1⟩
     items.zipIdx.map fun (_, k) => (if k == 0 then first else if k == 1 then second else ⟨v.x0, v.y0, v.x0, v.y0⟩).inter v
   assign_length := by simp
   assign_within := by
@@ -68,10 +76,14 @@ def splitWidget {Msg : Type} (vertical : Bool) (ratio : Nat) (onResize : Nat →
     render := fun env _ v =>
       let d := dividerRect vertical ratio v
       let t := env.theme
-      let c := if env.isFocused then t.accent else if env.isHovered || env.isPressed then t.text else t.border
+      -- A thin line between the two, its whole length; the grip only while the divider is
+      -- hovered, dragged or focused, so that a split at rest is only the line.
+      let line := dividerLine vertical ratio v
       let grip := if vertical then Rect.ofXYWH (d.x0 + d.width / 2 - px 12) (d.y0 + d.height / 2 - px 1) (px 24) (px 2)
         else Rect.ofXYWH (d.x0 + d.width / 2 - px 1) (d.y0 + d.height / 2 - px 12) (px 2) (px 24)
-      Scene.inBox v [.fill grip c (px 1)]
+      let c := if env.isFocused then t.accent else t.text
+      Scene.inBox v ([.fill line t.divider 0] ++
+        (if env.isFocused || env.isHovered || env.isPressed then [.fill grip c (px 1)] else []))
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun env st v e => match e with
       | .press p .primary => if (dividerRect vertical ratio v).contains p then some ({ dragging := true }, []) else none

@@ -19,6 +19,28 @@ def unreadable : ThemeData := { Theme.lightData with text := Theme.gray 0xA0 }
 /-- The light theme with a button that looks the same focused as not. -/
 def noFocusRing : ThemeData := { Theme.lightData with button.focus := {} }
 
+/-- The light theme with a chosen row too dark for its muted text. -/
+def mutedOnSelection : ThemeData := { Theme.lightData with selection := Theme.gray 0xA0 }
+
+/-- The light theme with a flat button whose caption cannot be read on a panel. -/
+def faintFlat : ThemeData := { Theme.lightData with flatButton.basic.fg := Theme.gray 0xC0 }
+
+/--
+error: Tactic `decide` proved that the proposition
+  mutedOnSelection.readable = true
+is false
+-/
+#guard_msgs in
+example : Theme := { mutedOnSelection with contrast_ok := by decide +kernel, focus_visible := by decide +kernel }
+
+/--
+error: Tactic `decide` proved that the proposition
+  faintFlat.readable = true
+is false
+-/
+#guard_msgs in
+example : Theme := { faintFlat with contrast_ok := by decide +kernel, focus_visible := by decide +kernel }
+
 /--
 error: Tactic `decide` proved that the proposition
   unreadable.readable = true

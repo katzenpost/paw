@@ -167,8 +167,27 @@ structure ThemeData where
   error : Color
   /-- Links' text. -/
   link : Color
+  /-- Lines between regions: decorative, so held to no contrast. -/
+  divider : Color
+  /-- A chosen row of a list, under the theme's `text` and `muted`. -/
+  selection : Color
+  /-- An unread count's pill, and its text. -/
+  badgeBg : Color
+  badgeFg : Color
   fontSize : Int := px 14
+  /-- Small text: times, receipts, hints. -/
+  captionSize : Int := px 12
+  /-- A pane's or a group's title. -/
+  headingSize : Int := px 15
+  /-- A view's title. -/
+  titleSize : Int := px 18
   button : Style
+  /-- The one action a view suggests, such as sending. -/
+  mainButton : Style
+  /-- A secondary action that shows its frame only when hovered, pressed or focused. -/
+  flatButton : Style
+  /-- An action that deletes or cannot be undone. -/
+  destructiveButton : Style
   checkbox : Style
   textField : Style
   /-- A toggle, option button or tab, not chosen. -/
@@ -180,18 +199,28 @@ structure ThemeData where
 namespace ThemeData
 
 /-- The styles of widgets that take focus. -/
-def controls (t : ThemeData) : List Style := [t.button, t.checkbox, t.textField, t.toggle, t.toggleOn]
+def controls (t : ThemeData) : List Style :=
+  [t.button, t.checkbox, t.textField, t.toggle, t.toggleOn, t.mainButton, t.flatButton, t.destructiveButton]
 
-/-- Every text is readable on what it is drawn on, and every control's edge can be seen. -/
+/-- Every text is readable on what it is drawn on, and every control's edge can be seen. A flat
+button has no edge until it is hovered, pressed or focused: its caption is what shows it, so its
+text must be readable on the window and on a panel. -/
 def readable (t : ThemeData) : Bool :=
   Contrast.readable t.text t.background && Contrast.readable t.text t.surface &&
   Contrast.readable t.link t.background && Contrast.readable t.link t.surface &&
   Contrast.readable t.muted t.textField.basic.bg && Contrast.readable t.muted t.background &&
+  Contrast.readable t.muted t.surface &&
+  Contrast.readable t.error t.background && Contrast.readable t.error t.surface &&
+  Contrast.readable t.text t.selection && Contrast.readable t.muted t.selection &&
+  Contrast.readable t.badgeFg t.badgeBg &&
   Contrast.distinct t.accent t.checkbox.basic.bg &&
   Contrast.distinct t.error t.textField.basic.bg && Contrast.distinct t.error t.background &&
+  Contrast.readable t.flatButton.basic.fg t.background && Contrast.readable t.flatButton.basic.fg t.surface &&
   t.controls.all fun s =>
     (s.states.all fun st => Contrast.readable st.fg st.bg) &&
-    Style.interactions.all fun i => i.disabled || Contrast.distinct (s.current i).border t.background
+    Style.interactions.all fun i =>
+      i.disabled || (s == t.flatButton && !i.hovered && !i.active && !i.focused) ||
+        Contrast.distinct (s.current i).border t.background
 
 /-- A focused control's border differs from its unfocused one, is at least 2 pixels wide, and
 can be told from the window. -/
@@ -223,10 +252,27 @@ def lightData : ThemeData :=
     focus := { border := some (Color.rgb 0x2A 0x6F 0xDB), borderWidth := some (px 2) }
     active := { bg := some (gray 0xE2) }
     disabled := { bg := some (gray 0xEB), fg := some (gray 0x5C), border := some (gray 0xC8) } }
-  { background := gray 0xF4, surface := Color.white, text := gray 0x20, muted := gray 0x6B,
+  { background := gray 0xF4, surface := Color.white, text := gray 0x20, muted := gray 0x5F,
     accent := Color.rgb 0x2A 0x6F 0xDB, border := gray 0x8A, error := Color.rgb 0xC6 0x28 0x28,
-    link := Color.rgb 0x1A 0x5B 0xC4,
+    link := Color.rgb 0x1A 0x5B 0xC4, divider := gray 0xD8, selection := gray 0xE2,
+    badgeBg := Color.rgb 0x2A 0x6F 0xDB, badgeFg := Color.white,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
+    mainButton := {
+      basic := { bg := Color.rgb 0x2A 0x6F 0xDB, fg := Color.white, border := Color.rgb 0x2A 0x6F 0xDB }
+      hover := { bg := some (Color.rgb 0x24 0x5F 0xC0), border := some (Color.rgb 0x24 0x5F 0xC0) }
+      focus := { border := some (Color.rgb 0x12 0x3A 0x80), borderWidth := some (px 2) }
+      focusHover := { border := some (Color.rgb 0x12 0x3A 0x80) }
+      active := { bg := some (Color.rgb 0x1F 0x52 0xA6) }
+      disabled := { bg := some (gray 0xEB), fg := some (gray 0x5C), border := some (gray 0xC8) } }
+    flatButton := { control .default with
+      basic := { bg := gray 0xF4, fg := gray 0x20, border := gray 0xF4 }
+      hover := { bg := some (gray 0xE6), border := some (gray 0x8A) }
+      focusHover := { border := some (Color.rgb 0x2A 0x6F 0xDB) }
+      active := { bg := some (gray 0xD6), border := some (gray 0x8A) } }
+    destructiveButton := { control .default with
+      basic := { bg := Color.white, fg := Color.rgb 0xC6 0x28 0x28, border := Color.rgb 0xC6 0x28 0x28 }
+      hover := { bg := some (Color.rgb 0xFC 0xEC 0xEC) }
+      active := { bg := some (Color.rgb 0xF9 0xE3 0xE3) } },
     textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
     toggle := control .default
     toggleOn := {
@@ -245,8 +291,25 @@ def darkData : ThemeData :=
     disabled := { bg := some (gray 0x26), fg := some (gray 0x9A), border := some (gray 0x40) } }
   { background := gray 0x1E, surface := gray 0x2B, text := gray 0xE6, muted := gray 0xA8,
     accent := Color.rgb 0x6C 0xA0 0xFF, border := gray 0x8A, error := Color.rgb 0xFF 0x6B 0x6B,
-    link := Color.rgb 0x8A 0xB4 0xFF,
+    link := Color.rgb 0x8A 0xB4 0xFF, divider := gray 0x3A, selection := gray 0x3A,
+    badgeBg := Color.rgb 0x6C 0xA0 0xFF, badgeFg := gray 0x10,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
+    mainButton := {
+      basic := { bg := Color.rgb 0x6C 0xA0 0xFF, fg := gray 0x10, border := Color.rgb 0x6C 0xA0 0xFF }
+      hover := { bg := some (Color.rgb 0x8A 0xB4 0xFF), border := some (Color.rgb 0x8A 0xB4 0xFF) }
+      focus := { border := some (gray 0xF0), borderWidth := some (px 2) }
+      focusHover := { border := some (gray 0xF0) }
+      active := { bg := some (Color.rgb 0x5A 0x8E 0xEB) }
+      disabled := { bg := some (gray 0x26), fg := some (gray 0x9A), border := some (gray 0x40) } }
+    flatButton := { control .default with
+      basic := { bg := gray 0x1E, fg := gray 0xE6, border := gray 0x1E }
+      hover := { bg := some (gray 0x33), border := some (gray 0x8A) }
+      focusHover := { border := some (Color.rgb 0x6C 0xA0 0xFF) }
+      active := { bg := some (gray 0x3A), border := some (gray 0x8A) } }
+    destructiveButton := { control .default with
+      basic := { bg := gray 0x2B, fg := Color.rgb 0xFF 0x8A 0x8A, border := Color.rgb 0xFF 0x6B 0x6B }
+      hover := { bg := some (Color.rgb 0x3A 0x26 0x26) }
+      active := { bg := some (Color.rgb 0x48 0x2C 0x2C) } },
     textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
     toggle := control .default
     toggleOn := {

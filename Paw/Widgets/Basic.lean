@@ -40,9 +40,37 @@ inductive TextOverflow where
   | ellipsis
   deriving Repr, DecidableEq, Inhabited
 
+/-- A text's weight in a view, as its color: the theme's text, or of less weight, or an error. -/
+inductive TextTone where
+  | normal
+  | muted
+  | error
+  deriving Repr, DecidableEq, Inhabited
+
+/-- A text's size, from the theme: small, body, a pane's title, a view's title. -/
+inductive TextSize where
+  | caption
+  | body
+  | heading
+  | title
+  deriving Repr, DecidableEq, Inhabited
+
+def TextTone.color (t : Theme) : TextTone → Color
+  | .normal => t.text
+  | .muted => t.muted
+  | .error => t.error
+
+def TextSize.size (t : Theme) : TextSize → Int
+  | .caption => t.captionSize
+  | .body => t.fontSize
+  | .heading => t.headingSize
+  | .title => t.titleSize
+
 /-- How a block of text is laid out. -/
 structure TextCfg where
   bold : Bool := false
+  tone : TextTone := .normal
+  size : TextSize := .body
   /-- Wrap to the box's width. -/
   wrap : Bool := false
   /-- At most this many lines are shown. -/
@@ -134,7 +162,8 @@ def joinLines (lines : List SafeText) : SafeText :=
 /-- Lines of text, laid out by `cfg`. Wrapped, it asks for its natural width but takes less, and
 its height at the width it is given. -/
 def textBlock {Msg : Type} (lines : List SafeText) (cfg : TextCfg := {}) : Widget Msg :=
-  let style (env : Env) : TextStyle := { textStyle env with bold := cfg.bold }
+  let style (env : Env) : TextStyle :=
+    { bold := cfg.bold, size := cfg.size.size env.theme, color := cfg.tone.color env.theme }
   let flexible := cfg.wrap || cfg.overflow == .ellipsis
   let height (env : Env) (n : Nat) : SizeReq := SizeReq.fixedSize (n * lineHeight env (style env)).toNat
   Widget.Spec.build (σ := NoState) {
@@ -162,16 +191,33 @@ def textBlock {Msg : Type} (lines : List SafeText) (cfg : TextCfg := {}) : Widge
     render_within := fun _ _ v => Scene.inBox_within v _
     access := fun _ _ => some { role := .label, name := joinLines lines } }
 
-/-- One line of text, in bold if `bold`. -/
-def label {Msg : Type} (t : SafeText) (bold : Bool := false) : Widget Msg :=
-  textBlock [t] { bold, maxLines := some 1 }
+/-- One line of text, in bold if `bold`, in `tone` and `size`. -/
+def label {Msg : Type} (t : SafeText) (bold : Bool := false) (tone : TextTone := .normal)
+    (size : TextSize := .body) : Widget Msg :=
+  textBlock [t] { bold, tone, size, maxLines := some 1 }
 
 /-- Lines of text, one under another, each wrapped to the width given. -/
 def paragraph {Msg : Type} (lines : List SafeText) : Widget Msg := textBlock lines { wrap := true }
 
+/-- What a button is for, which picks its style: an ordinary action, the one a view suggests, a
+secondary one that shows its frame only when hovered, pressed or focused, or one that deletes. -/
+inductive ButtonKind where
+  | normal
+  | main
+  | flat
+  | destructive
+  deriving Repr, DecidableEq, Inhabited
+
+def ButtonKind.style (t : Theme) : ButtonKind → Style
+  | .normal => t.button
+  | .main => t.mainButton
+  | .flat => t.flatButton
+  | .destructive => t.destructiveButton
+
 /-- A button that emits `onClick` when clicked, or when Enter or Space is pressed on it; if
-`designated`, only when that input designated it, as `Req.choose`. -/
-def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool := false) : Widget Msg :=
+`designated`, only when that input designated it, as `Req.choose`. `kind` picks its style. -/
+def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool := false)
+    (kind : ButtonKind := .normal) : Widget Msg :=
   let act : Req Msg := if designated then .choose onClick else .emit onClick
   Widget.Spec.build (σ := NoState) {
     kind := "button"
@@ -181,10 +227,12 @@ def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool 
       let (padX, padY) := env.theme.button.padding
       (fixedSize (w + 2 * padX).toNat, fixedSize (h + 2 * padY).toNat)
     render := fun env _ v =>
-      let s := env.look env.theme.button
+      let s := env.look (kind.style env.theme)
       let style := { textStyle env with color := s.fg }
       let (w, _) := env.measure style caption
-      Scene.inBox v (frame v s ++ [centeredText env v (v.x0 + (v.width - w) / 2) caption style])
+      -- A flat button at rest, or disabled, is only its caption, on whatever it is drawn on.
+      let rest := kind == .flat && !env.isHovered && !env.isPressed && !env.isFocused
+      Scene.inBox v ((if rest then [] else frame v s) ++ [centeredText env v (v.x0 + (v.width - w) / 2) caption style])
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun _ st _ e => match e with
       | .click .. => some (st, [act])
@@ -192,7 +240,7 @@ def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool 
       | .enter _ | .leave _ | .press .. | .release .. | .focus | .blur => some (st, [])
       | _ => none
     focusable := true
-    cursor := fun env _ => (env.look env.theme.button).cursor
+    cursor := fun env _ => (env.look (kind.style env.theme)).cursor
     access := fun _ _ => some { role := .button, name := caption } }
 
 /-- A checkbox showing `value`, which emits `onChange` with the other value when toggled. -/
@@ -234,13 +282,52 @@ def backdrop {Msg : Type} : Widget Msg :=
     render := fun env _ v => Scene.inBox v [.fill v env.theme.background 0]
     render_within := fun _ _ v => Scene.inBox_within v _ }
 
+/-- The theme's panel color over its box, with no frame: a sidebar or a bar set apart from the
+window. -/
+def surface {Msg : Type} : Widget Msg :=
+  Widget.Spec.build (σ := NoState) {
+    kind := "surface"
+    init := {}
+    sizeReq := fun _ _ => ({}, {})
+    render := fun env _ v => Scene.inBox v [.fill v env.theme.surface 0]
+    render_within := fun _ _ v => Scene.inBox_within v _ }
+
+/-- Empty space that takes the room left over both ways: for centering things in a box. -/
+def filler {Msg : Type} : Widget Msg :=
+  Widget.Spec.build (σ := NoState) {
+    kind := "filler"
+    init := {}
+    sizeReq := fun _ _ => (SizeReq.filler, SizeReq.filler)
+    render := fun _ _ _ => Scene.empty
+    render_within := fun _ _ v => Scene.empty_within v }
+
+/-- A count in a pill, such as how many messages are unread, told to assistive technology as
+`n` and what it counts. -/
+def badge {Msg : Type} (n : Nat) (what : String := "unread") : Widget Msg :=
+  let t := SafeText.trusted (toString n)
+  let style (env : Env) : TextStyle :=
+    { size := env.theme.captionSize, color := env.theme.badgeFg, bold := true }
+  Widget.Spec.build (σ := NoState) {
+    kind := "badge"
+    init := {}
+    sizeReq := fun env _ =>
+      let (w, h) := env.measure (style env) t
+      let height := h + px 2
+      (fixedSize (max height (w + px 12)).toNat, fixedSize height.toNat)
+    render := fun env _ v =>
+      let (w, _) := env.measure (style env) t
+      Scene.inBox v [.fill v env.theme.badgeBg (v.height / 2),
+        centeredText env v (v.x0 + (v.width - w) / 2) t (style env)]
+    render_within := fun _ _ v => Scene.inBox_within v _
+    access := fun _ _ => some { role := .label, name := SafeText.trusted s!"{n} {what}" } }
+
 /-- Empty space that takes the width left over, and no height: for pushing things apart in a
 row. -/
 def spacer {Msg : Type} : Widget Msg :=
   Widget.Spec.build (σ := NoState) {
     kind := "spacer"
     init := {}
-    sizeReq := fun _ _ => (filler, {})
+    sizeReq := fun _ _ => (SizeReq.filler, {})
     render := fun _ _ _ => Scene.empty
     render_within := fun _ _ v => Scene.empty_within v }
 

@@ -27,9 +27,11 @@ def tests : TestM Unit := do
   let s := box rt "split"
   let items := box rt "items"
   let grid := box rt "grid"
-  checkEq "the first side takes its share" ((s.width - Widgets.dividerWidth) * 350 / 1000) items.width
+  checkEq "the first side takes its share, up to the divider's line"
+    ((s.width - Widgets.dividerWidth) * 350 / 1000 + Widgets.dividerWidth / 2) items.width
   checkEq "and the second the rest, after the divider" s.x1 grid.x1
-  check "with the divider between" (grid.x0 - items.x1 == Widgets.dividerWidth)
+  check "with the divider's line between" (grid.x0 - items.x1 == px 1)
+  checkEq "which is where the line is drawn" (Widgets.dividerLine false 350 s).x0 items.x1
   -- Dragging the divider.
   let d := Widgets.dividerRect false 350 s
   let mid : Point := ⟨(d.x0 + d.x1) / 2, (d.y0 + d.y1) / 2⟩

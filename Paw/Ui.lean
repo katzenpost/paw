@@ -33,20 +33,31 @@ open Widgets
 variable {Msg : Type}
 
 /-- The text block for one line: wrapped to more lines up to `maxLines`, the last cut short by
-`overflow`. -/
-def lineCfg (overflow : TextOverflow) (maxLines : Nat) : TextCfg :=
-  { wrap := maxLines > 1, maxLines := some maxLines, overflow }
+`overflow`, in `bold`, `tone` and `size`. -/
+def lineCfg (overflow : TextOverflow) (maxLines : Nat) (bold : Bool := false) (tone : TextTone := .normal)
+    (size : TextSize := .body) : TextCfg :=
+  { wrap := maxLines > 1, maxLines := some maxLines, overflow, bold, tone, size }
 
 /-- The app's own words: one line, or wrapped to up to `maxLines`, cut at the edge or with an
-ellipsis. -/
+ellipsis; in bold, of less weight (`tone := .muted`), or in another size if asked. -/
 def label (s : String) (key : Option String := none) (overflow : TextOverflow := .clip)
-    (maxLines : Nat := 1) : Node Msg :=
-  Node.leaf (Widgets.textBlock [SafeText.trusted s] (lineCfg overflow maxLines)) key
+    (maxLines : Nat := 1) (bold : Bool := false) (tone : TextTone := .normal) (size : TextSize := .body) :
+    Node Msg :=
+  Node.leaf (Widgets.textBlock [SafeText.trusted s] (lineCfg overflow maxLines bold tone size)) key
 
 /-- Text from elsewhere, filtered, laid out as `label` lays out the app's. -/
 def text (t : SafeText) (key : Option String := none) (overflow : TextOverflow := .clip)
-    (maxLines : Nat := 1) : Node Msg :=
-  Node.leaf (Widgets.textBlock [t] (lineCfg overflow maxLines)) key
+    (maxLines : Nat := 1) (bold : Bool := false) (tone : TextTone := .normal) (size : TextSize := .body) :
+    Node Msg :=
+  Node.leaf (Widgets.textBlock [t] (lineCfg overflow maxLines bold tone size)) key
+
+/-- A pane's or a group's title: the app's words, bold, at the theme's heading size. -/
+def heading (s : String) (key : Option String := none) : Node Msg :=
+  label s key (overflow := .ellipsis) (bold := true) (size := .heading)
+
+/-- Small text of less weight, such as a time or a hint, from elsewhere and filtered. -/
+def caption (t : SafeText) (key : Option String := none) (overflow : TextOverflow := .ellipsis) : Node Msg :=
+  text t key overflow (tone := .muted) (size := .caption)
 
 /-- Text from elsewhere, as its filtered lines. -/
 def paragraph (s : String) (key : Option String := none) : Node Msg :=
@@ -54,6 +65,18 @@ def paragraph (s : String) (key : Option String := none) : Node Msg :=
 
 def button (caption : String) (onClick : Msg) (key : Option String := none) : Node Msg :=
   Node.leaf (Widgets.button (SafeText.trusted caption) onClick) key
+
+/-- The one action a view suggests, in the theme's accent, as monomer's `mainButton`. -/
+def mainButton (caption : String) (onClick : Msg) (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.button (SafeText.trusted caption) onClick (kind := .main)) key
+
+/-- A secondary action: its caption alone until hovered, pressed or focused. -/
+def flatButton (caption : String) (onClick : Msg) (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.button (SafeText.trusted caption) onClick (kind := .flat)) key
+
+/-- An action that deletes or cannot be undone, in the theme's error color. -/
+def destructiveButton (caption : String) (onClick : Msg) (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.button (SafeText.trusted caption) onClick (kind := .destructive)) key
 
 def checkbox (caption : String) (value : Bool) (onChange : Bool → Msg)
     (key : Option String := none) : Node Msg :=
@@ -73,6 +96,18 @@ def passwordField (value : Secret) (onChange : Secret → Msg) (key : Option Str
   Node.leaf (Widgets.passwordField value onChange) key
 
 def spacer : Node Msg := Node.leaf Widgets.spacer
+
+/-- Empty space that takes the room left over both ways, as monomer's `filler`: for centering. -/
+def filler : Node Msg := Node.leaf Widgets.filler
+
+/-- `child` on the theme's panel color, with no frame: a sidebar, a header or a bar set apart from
+the window. -/
+def surface (child : Node Msg) (key : Option String := none) : Node Msg :=
+  Node.containerWith Widgets.surface (box { expand := true }) [child] key
+
+/-- A count in a pill, such as how many messages are unread. -/
+def badge (n : Nat) (what : String := "unread") (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.badge n what) key
 
 /-- Children one above the other. -/
 def col (children : List (Node Msg)) (spacing : Int := px 4) (key : Option String := none) :
@@ -206,6 +241,21 @@ def selectListWith {α : Type} [BEq α] (items : List α) (selected : Option α)
       ({ · with key := some (keyOf a) })
   Node.containerWith (selectListBox items.length chosen pick) (listLayout rows) (items.map row) key
 
+/-- `items` in rows, `selected` chosen, in a box `rows` rows tall that scrolls, each row built by
+`row` and read to assistive technology as `name`; `extra` is asked for too when one is clicked.
+A row is one line of a select list's height. Unless `framed`, the box is drawn only while it has
+focus, for a list in a sidebar. -/
+def selectListOf {α : Type} [BEq α] (items : List α) (selected : Option α) (onChange : α → Msg)
+    (row : α → Node Msg) (name : α → String) (keyOf : α → String) (rows : Nat := 6) (framed : Bool := true)
+    (extra : List Msg := []) (key : Option String := none) : Node Msg :=
+  let arr := items.toArray
+  let chosen := selected.bind fun s => arr.findIdx? (· == s)
+  let pick (i : Nat) : List Msg := (arr[i]?.map fun a => [onChange a]).getD [] ++ extra
+  let rowNode (a : α) : Node Msg :=
+    Node.containerWith (Widgets.listRow (SafeText.filter (name a)) (selected.any (· == a)) (onChange a :: extra))
+      Widgets.listRowLayout [row a] (some (keyOf a))
+  Node.containerWith (selectListBox items.length chosen pick framed) (listLayout rows) (items.map rowNode) key
+
 /-- `items` in rows, `selected` chosen, in a box that scrolls. -/
 def selectList {α : Type} [BEq α] (items : List α) (selected : Option α) (onChange : α → Msg)
     (caption : α → String) (keyOf : α → String) (rows : Nat := 6) (key : Option String := none) : Node Msg :=
@@ -230,8 +280,9 @@ def textDropdown (items : List String) (selected : String) (onChange : String �
     (onOpen : Bool → Msg) (key : Option String := none) : Node Msg :=
   dropdown items selected onChange id id isOpen onOpen key
 
-/-- A line across the box, or down it if `vertical`. -/
-def separator (vertical : Bool := false) : Node Msg := Node.leaf (Widgets.separator vertical)
+/-- A line across the box, or down it if `vertical`, leaving `inset` at each end. -/
+def separator (vertical : Bool := false) (inset : Int := 0) : Node Msg :=
+  Node.leaf (Widgets.separator vertical inset)
 
 /-- Pages, one shown at a time, chosen by a row of tabs: each page is its caption, the value that
 shows it, and the page. Pages not shown keep their state. -/
@@ -296,10 +347,11 @@ be undone. `cancel`, Escape and Enter emit `onCancel`; `accept` emits `onAccept`
 chose it: a click on it within `stableMs` of the dialog appearing, a synthetic click or a press from
 assistive technology is dropped. -/
 def confirm (m : Modal) (title : SafeName) (body : String) (onAccept onCancel : Msg)
-    (accept : String := "OK") (cancel : String := "Cancel") : Node Msg :=
-  dialog m title (col [Node.leaf (Widgets.label title.toText (bold := true)), paragraph body,
+    (accept : String := "OK") (cancel : String := "Cancel") (acceptKind : ButtonKind := .main) : Node Msg :=
+  dialog m title (col [Node.leaf (Widgets.label title.toText (bold := true) (size := .heading)), paragraph body,
     row [spacer, button cancel onCancel "cancel",
-      Node.leaf (Widgets.button (SafeText.trusted accept) onAccept (designated := true)) "accept"]] (px 8))
+      Node.leaf (Widgets.button (SafeText.trusted accept) onAccept (designated := true) (kind := acceptKind)) "accept"]
+      (px 6)] (px 12))
     onCancel
 
 /-- A link with `caption`, asking for `onOpen` when activated; the app opens it with

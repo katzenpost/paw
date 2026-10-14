@@ -90,17 +90,18 @@ def tabBar {Msg : Type} : Widget Msg :=
     render_within := fun _ _ v => Scene.empty_within v
     access := fun _ _ => some { role := .tabList } }
 
-/-- A line between things, across the box if `vertical` is false, else down it. -/
-def separator {Msg : Type} (vertical : Bool := false) : Widget Msg :=
+/-- A line between things, across the box if `vertical` is false, else down it, in the theme's
+divider color, leaving `inset` at each end. -/
+def separator {Msg : Type} (vertical : Bool := false) (inset : Int := 0) : Widget Msg :=
   Widget.Spec.build (σ := NoState) {
     kind := "separator"
     init := {}
     sizeReq := fun _ _ =>
       if vertical then (fixedSize (px 9).toNat, {}) else ({}, fixedSize (px 9).toNat)
     render := fun env _ v =>
-      let line := if vertical then Rect.ofXYWH (v.x0 + v.width / 2) v.y0 (px 1) v.height
-        else Rect.ofXYWH v.x0 (v.y0 + v.height / 2) v.width (px 1)
-      Scene.inBox v [.fill line env.theme.border 0]
+      let line := if vertical then Rect.ofXYWH (v.x0 + v.width / 2) (v.y0 + inset) (px 1) (v.height - 2 * inset)
+        else Rect.ofXYWH (v.x0 + inset) (v.y0 + v.height / 2) (v.width - 2 * inset) (px 1)
+      Scene.inBox v [.fill line env.theme.divider 0]
     render_within := fun _ _ v => Scene.inBox_within v _
     access := fun _ _ => some { role := .separator } }
 

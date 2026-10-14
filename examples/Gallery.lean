@@ -26,6 +26,7 @@ inductive Page where
   | layout
   | drag
   | colors
+  | styles
   deriving Repr, BEq, Inhabited
 
 def fruits : List String :=
@@ -96,6 +97,8 @@ inductive Msg where
   | inkOpen (b : Bool)
   | preview (dark : Bool)
   | picture (img : Except ImageError Image)
+  | room (r : String)
+  | styleShare (r : Nat)
   | startClock
   | tick
 
@@ -139,6 +142,8 @@ structure Model where
   previewDark : Bool := true
   clock : Bool := false
   ticks : Nat := 0
+  room : String := "general"
+  styleShare : Nat := 300
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
@@ -148,7 +153,8 @@ instance : BEq Model where
     a.date == b.date && a.time == b.time && a.volume.val == b.volume.val && a.treble.val == b.treble.val &&
     a.bass.val == b.bass.val && a.fruit == b.fruit && a.country == b.country && a.countryOpen == b.countryOpen &&
     a.color == b.color && a.colorOpen == b.colorOpen && a.share == b.share && a.todo == b.todo && a.done == b.done &&
-    a.paint == b.paint && a.ink == b.ink && a.inkOpen == b.inkOpen && a.previewDark == b.previewDark && a.clock == b.clock && a.ticks == b.ticks
+    a.paint == b.paint && a.ink == b.ink && a.inkOpen == b.inkOpen && a.previewDark == b.previewDark && a.clock == b.clock && a.ticks == b.ticks &&
+    a.room == b.room && a.styleShare == b.styleShare
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -241,6 +247,8 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .ink c => modify fun (m, cs) => ({ m with ink := c }, cs)
   | _, .inkOpen b => modify fun (m, cs) => ({ m with inkOpen := b }, cs)
   | _, .preview d => modify fun (m, cs) => ({ m with previewDark := d }, cs)
+  | _, .room r => modify fun (m, cs) => ({ m with room := r }, cs)
+  | _, .styleShare r => modify fun (m, cs) => ({ m with styleShare := r }, cs)
 
 /-- Radio buttons, option buttons, a toggle button and separators. -/
 def choicesPage (m : Model) : Node Msg :=
@@ -314,6 +322,29 @@ def colorsPage (m : Model) : Node Msg :=
         Ui.themeSwitch (if m.previewDark then Theme.dark else Theme.light) (Ui.pad (px 8) (Ui.col [
           Ui.label "Preview", Ui.button "A button" .inc, Ui.checkbox "A choice" m.agree .agree]))] (px 6)] (px 16)] (px 12)
 
+def rooms : List (String × Nat) := [("general", 0), ("design", 3), ("releases", 12), ("random", 0)]
+
+/-- Text of each weight and size, each kind of button, a badge, and a sidebar on a surface whose
+rows are built from nodes, beside the rest across a split. -/
+def stylesPage (m : Model) : Node Msg :=
+  let room (r : String × Nat) : Node Msg :=
+    Ui.row ([Ui.label r.1 (bold := r.2 > 0), Ui.spacer] ++ (if r.2 > 0 then [Ui.badge r.2] else [])) (px 6)
+  Ui.height (px 300) <| Ui.split
+    (Ui.surface (Ui.pad (px 12) (Ui.col [Ui.heading "Rooms" "roomsTitle",
+      Ui.selectListOf rooms (rooms.find? (·.1 == m.room)) (.room ·.1) room (·.1) ("room-" ++ ·.1)
+        (rows := 4) (framed := false) (key := "rooms")] (px 6))))
+    (Ui.pad (px 12) (Ui.col [
+      Ui.label "A title" "titleText" (bold := true) (size := .title),
+      Ui.heading "A heading" "headingText",
+      Ui.label "Body text, the theme's own size." "bodyText",
+      Ui.caption (SafeText.trusted "A caption, of less weight") "captionText",
+      Ui.label "Something went wrong" "errorText" (tone := .error),
+      Ui.separator (inset := px 12),
+      Ui.row [Ui.mainButton "Send" .inc "mainButton", Ui.button "Cancel" .dec "normalButton",
+        Ui.flatButton "Details" .inc "flatButton", Ui.destructiveButton "Delete" .dec "destructiveButton"] (px 6),
+      Ui.row [Ui.label "Unread", Ui.badge 7 (key := "badge")] (px 6)] (px 6)))
+    m.styleShare .styleShare (key := "styleSplit")
+
 /-- The first page: what the gallery had before it had tabs. -/
 def basicsPage (m : Model) : Node Msg :=
   Ui.col [
@@ -345,11 +376,12 @@ def view (m : Model) : Node Msg :=
     Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m),
       ("Inputs", .inputs, inputsPage m), ("Lists", .lists, listsPage m),
       ("Layout", .layout, layoutPage m), ("Drag", .drag, dragPage m),
-      ("Colors", .colors, colorsPage m)]] ++
+      ("Colors", .colors, colorsPage m), ("Styles", .styles, stylesPage m)]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")
-      s!"This removes all {m.items.length} items. It cannot be undone." .clear .keep (accept := "Clear")))
+      s!"This removes all {m.items.length} items. It cannot be undone." .clear .keep (accept := "Clear")
+      (acceptKind := .destructive)))
 
 def app : App caps := { Model := Model, Msg := Msg, init := {}, update, view }
 

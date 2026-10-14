@@ -29,9 +29,8 @@ def r (x y w h : Int) : Rect := Rect.ofXYWH (px x) (px y) (px w) (px h)
 def sz (n : Nat) : Nat := (px n).toNat
 
 /-- A leaf that counts the clicks it gets and reports them, and says goodbye when disposed. -/
-def counter (label : Nat) (width : Nat := 10) : Widget Msg where
+def counter (label : Nat) (width : Nat := 10) : Widget Msg := Widget.Spec.build (σ := Count) {
   kind := "counter"
-  State := Count
   init := ⟨0⟩
   sizeReq := fun _ _ => (SizeReq.fixedSize (sz width), SizeReq.fixedSize (sz 10))
   render := fun _ st v => Scene.draw v (.fill v (Color.rgb (UInt8.ofNat label) (UInt8.ofNat st.n) 0) 0)
@@ -39,25 +38,23 @@ def counter (label : Nat) (width : Nat := 10) : Widget Msg where
   handle := fun _ st _ e => match e with
     | .click .. => some (⟨st.n + 1⟩, [.emit (.bumped (st.n + 1))])
     | _ => none
-  dispose := fun st => [.emit (.gone st.n)]
+  dispose := fun st => [.emit (.gone st.n)] }
 
 /-- A leaf of another kind. -/
-def plain : Widget Msg where
+def plain : Widget Msg := Widget.Spec.build (σ := NoState) {
   kind := "plain"
-  State := NoState
   init := {}
   sizeReq := fun _ _ => (SizeReq.fixedSize (sz 5), SizeReq.fixedSize (sz 5))
   render := fun _ _ _ => Scene.empty
-  render_within := fun _ _ v => Scene.empty_within v
+  render_within := fun _ _ v => Scene.empty_within v }
 
 /-- A leaf that draws outside its box, which `Node.render` must not allow through. -/
-def unruly : Widget Msg where
+def unruly : Widget Msg := Widget.Spec.build (σ := NoState) {
   kind := "unruly"
-  State := NoState
   init := {}
   sizeReq := fun _ _ => (SizeReq.fixedSize (sz 5), SizeReq.fixedSize (sz 5))
   render := fun _ _ v => (Scene.draw (v.translate ⟨px 100, 0⟩) (.fill (r 0 0 999 999) Color.black 0)).clip v
-  render_within := fun _ _ v => Scene.clip_within v _
+  render_within := fun _ _ v => Scene.clip_within v _ }
 
 def env : Env := Env.mock
 
@@ -67,7 +64,8 @@ def col (children : List (Node Msg)) : Node Msg := Node.container (vstack.toLayo
 
 /-- Clicks the node with `id`, as the runtime does. -/
 def clickAt (n : Node Msg) (id : WidgetId) : Node Msg × List (Req Msg) :=
-  n.handleAt env id (.click ⟨0, 0⟩ .primary 1)
+  let (n, reqs) := n.handleAt env id (.click ⟨0, 0⟩ .primary 1)
+  (n, reqs.getD [])
 
 def counts (n : Node Msg) : List Nat :=
   n.children.map fun c => (c.state? Count).map (·.n) |>.getD 999

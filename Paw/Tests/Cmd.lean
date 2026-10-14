@@ -20,16 +20,15 @@ def r (x y w h : Int) : Rect := Rect.ofXYWH (px x) (px y) (px w) (px h)
 
 def sz (n : Nat) : Nat := (px n).toNat
 
-def linkBox : Widget String where
-  kind := "link"
-  State := NoState
+def linkBox (kind := "link") : Widget String := Widget.Spec.build (σ := NoState) {
+  kind
   init := {}
   sizeReq := fun _ _ => (SizeReq.fixedSize (sz 10), SizeReq.fixedSize (sz 10))
   render := fun _ _ _ => Scene.empty
   render_within := fun _ _ v => Scene.empty_within v
   handle := fun _ st _ e => match e with
     | .click .. => some (st, [.emit "open"])
-    | _ => none
+    | _ => none }
 
 /-- Two links keyed "msg1" and "msg2", side by side. -/
 def tree : Node String :=
@@ -83,7 +82,7 @@ abbrev counter : Component [] where
   Model := Nat
   Msg := Bool
   update := fun _ up => modify fun (n, cs) => (if up then n + 1 else n - 1, cs)
-  view := fun n => Node.leaf { linkBox with kind := s!"counter{n}" } |>.mapMsg fun _ => true
+  view := fun n => Node.leaf (linkBox s!"counter{n}") |>.mapMsg fun _ => true
 
 def tests : TestM Unit := do
   let some d1 := clickOn 5 | check "a real click designates" false
@@ -134,7 +133,7 @@ def tests : TestM Unit := do
   let v := (counter.view 3).init 1 |>.1
   checkEq "a component's view, mapped into the parent's messages" "counter3" v.kind
   let (_, reqs) := v.handleAt Env.mock ⟨1⟩ (.click ⟨0, 0⟩ .primary 1)
-  checkEq "its messages come out mapped" [Req.emit true] reqs
+  checkEq "its messages come out mapped" (some [Req.emit true]) reqs
   checkEq "Origin.designation" (some d1) (Origin.user d1).designation
   checkEq "no designation for other" none Origin.other.designation
 

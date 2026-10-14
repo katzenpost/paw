@@ -20,14 +20,13 @@ def sz (n : Nat) : Nat := (px n).toNat
 
 def pt (x y : Int) : Point := ⟨px x, px y⟩
 
-def box (focusable : Bool := true) (w h : Nat := 10) : Widget Unit where
+def box (focusable : Bool := true) (w h : Nat := 10) : Widget Unit := Widget.Spec.build (σ := NoState) {
   kind := "box"
-  State := NoState
   init := {}
   sizeReq := fun _ _ => (SizeReq.fixedSize (sz w), SizeReq.fixedSize (sz h))
   render := fun _ _ _ => Scene.empty
   render_within := fun _ _ v => Scene.empty_within v
-  focusable
+  focusable }
 
 def env : Env := Env.mock
 

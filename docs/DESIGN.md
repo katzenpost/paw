@@ -73,7 +73,7 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 
 | Concept | In monomer | In Paw |
 | --- | --- | --- |
-| Widget interface | `Widget s e`, a record of init, merge, dispose, event and message handling, size request, resize, render (`Core/WidgetTypes.hs`) | The same record over the widget's own state, with law fields and a pure render; it never sees the tree |
+| Widget interface | `Widget s e`, a record of init, merge, dispose, event and message handling, size request, resize, render (`Core/WidgetTypes.hs`) | The same record, written over the widget's own state type as a `Widget.Spec`, with law fields and a pure render; it never sees the tree |
 | Leaves and containers | `Single` for leaves, `Container` for children | A leaf is a `Widget`; a container is a `Layout` with children |
 | Effects as data | Every operation returns a node and a list of `WidgetRequest`s | Operations return a node and a list of `Cmd`s, typed by capability and origin |
 | Rebuild and merge | The view is rebuilt from the model; `mergeChildSeq` pairs old and new children by position, then by key; unmatched new ones are initialized, unmatched old ones disposed (`Widgets/Container.hs`) | The same algorithm, with keys unique among siblings; an old child no new child merged with is disposed |
@@ -337,14 +337,19 @@ Each law is about the Lean side. Some guarantees also depend on things outside i
 
 ## Runtime loop
 
-One cycle, as in monomer's `mainLoop`:
+`Runtime.step` is pure: it takes the runtime's state and one event from the window, and returns the new state and a list of outputs. An output is either a request for the platform (draw a scene, set the title, write the clipboard, open a link, notify, quit) or a task to run. Tests drive `step` directly.
 
-1. Take the platform events Rust has queued, and the results of finished tasks.
-2. For each input event, find its target: the focused path, or the hit-test result for the point, starting from the overlay if there is one. Apply the checks and make a `Designation` if they pass. Then deliver it to the target with origin `input d`.
-3. For each task result, look up its `WidgetId`, drop it if the widget is gone, and deliver it with origin `result`.
-4. Run `update`. Run `view` and merge if the model changed, and lay out again where sizes were requested.
-5. Perform the commands. Effects go to Rust as requests, and tasks start with `IO.asTask`.
-6. If a render was requested, build the Scene and send it to Rust.
+One step for input, as in monomer's `mainLoop`:
+
+1. The router finds each event's target and makes a `Designation` if the checks pass.
+2. Each delivery goes to its widget, and to the widget's ancestors in turn if it does not handle it. This is how a scroll gets the wheel over its content.
+3. The messages that come out go to `update`, with origin `user d` if the delivery carried a designation `d` and `other` if not. A widget's `copy` request is honoured only with a designation.
+4. If the model changed, the view is rebuilt, merged with the tree on screen, laid out, and the router notes where everything now is.
+5. The scene is drawn again only if the model changed, a widget handled the input, or focus, hover or press moved. Pointer movement over a place where nothing reacts draws nothing.
+
+`Runtime.run` is the IO loop around `step`, over a `Platform`, a structure of IO functions: poll events, the time, the window size, measure text, perform a request. The Rust layer provides one, and tests a scripted fake. Tasks run with `IO.asTask`; their results are stepped in with origin `other`.
+
+Nodes, trees and the runtime must be in `Type` for `IO` to hold them. So a widget keeps its state as a `Dynamic`. Widgets are still written over their own state type, as a `Widget.Spec Msg σ` whose `build` wraps each function, and `render_within` carries through the wrapping.
 
 ## Testing
 

@@ -30,7 +30,7 @@ structure NodeInfo where
   deriving Repr, Inhabited
 
 inductive Node (Msg : Type) where
-  | private mk (w : Widget Msg) (st : w.State) (info : NodeInfo) (layout : Option Layout)
+  | private mk (w : Widget Msg) (st : Dynamic) (info : NodeInfo) (layout : Option Layout)
       (children : List (Node Msg))
 
 /-- A node's kind, key and visibility, and its children's, without state. -/
@@ -57,7 +57,7 @@ def focusable (n : Node Msg) : Bool := n.widget.focusable && n.enabled && n.visi
 
 /-- The node's state, if it is an `α`. -/
 def state? (α : Type) [TypeName α] : Node Msg → Option α
-  | mk _ st .. => (Dynamic.mk st).get? α
+  | mk _ st .. => st.get? α
 
 def withInfo (f : NodeInfo → NodeInfo) : Node Msg → Node Msg
   | mk w st i l cs => mk w st (f i) l cs
@@ -110,7 +110,13 @@ def leaf (w : Widget Msg) (key : Option String := none) : Node Msg := mk w w.ini
 
 /-- Children laid out by `l`. -/
 def container (l : Layout) (children : List (Node Msg)) (key : Option String := none) : Node Msg :=
-  mk (Widget.container l.name) ({} : NoState) { key } (some l) (dedupKeys [] children)
+  mk (Widget.container l.name) (Dynamic.mk ({} : NoState)) { key } (some l) (dedupKeys [] children)
+
+/-- Children laid out by `l`, held by a widget of the container's own, such as a scroll that draws
+bars and handles the wheel. -/
+def containerWith (w : Widget Msg) (l : Layout) (children : List (Node Msg))
+    (key : Option String := none) : Node Msg :=
+  mk w w.init { key } (some l) (dedupKeys [] children)
 
 instance : Inhabited (Node Msg) := ⟨leaf (Widget.container "")⟩
 
@@ -164,12 +170,9 @@ def layoutName : Node Msg → Option String
 def canMerge (new old : Node Msg) : Bool :=
   new.kind == old.kind && new.key == old.key && new.layoutName == old.layoutName
 
-/-- The state `new` starts with, given the node it replaces. -/
+/-- `new` with the state its widget keeps from the node it replaces. -/
 def carryState : Node Msg → Node Msg → Node Msg
-  | mk w st i l cs, mk _ ost .. =>
-    match (Dynamic.mk ost).get? w.State with
-    | some s => mk w (w.merge s) i l cs
-    | none => mk w st i l cs
+  | mk w _ i l cs, mk _ ost .. => mk w (w.merge ost) i l cs
 
 /-- The merge's running state: the next free id, requests, and ids of old nodes merged. -/
 structure MergeState (Msg : Type) where
@@ -299,25 +302,47 @@ end
 def paths (n : Node Msg) : List (WidgetId × List Nat) := pathsFrom [] n
 
 mutual
-/-- The node with `id` handles `e`; the tree with its new state, and its requests. -/
-def handleAt (env : Env) (id : WidgetId) (e : Event) : Node Msg → Node Msg × List (Req Msg)
+/-- The node with `id` handles `e`: the tree with its new state, and its requests, or `none` if
+it did not handle it. -/
+def handleAt (env : Env) (id : WidgetId) (e : Event) : Node Msg → Node Msg × Option (List (Req Msg))
   | mk w st i l cs =>
     if i.id == id then
       match w.handle env st i.viewport e with
-      | some (st', reqs) => (mk w st' i l cs, reqs)
-      | none => (mk w st i l cs, [])
+      | some (st', reqs) => (mk w st' i l cs, some reqs)
+      | none => (mk w st i l cs, none)
     else
       let (cs', reqs) := handleList env id e cs
       (mk w st i l cs', reqs)
 
 def handleList (env : Env) (id : WidgetId) (e : Event) :
-    List (Node Msg) → List (Node Msg) × List (Req Msg)
-  | [] => ([], [])
+    List (Node Msg) → List (Node Msg) × Option (List (Req Msg))
+  | [] => ([], none)
   | c :: cs =>
     let (c', r1) := handleAt env id e c
     let (cs', r2) := handleList env id e cs
-    (c' :: cs', r1 ++ r2)
+    (c' :: cs', r1.orElse fun _ => r2)
 end
+
+/-- The ids of the node with `id` and its ancestors, nearest first. -/
+def lineage (n : Node Msg) (id : WidgetId) : List WidgetId :=
+  let ps := n.paths
+  match ps.lookup id with
+  | some path => ((List.range (path.length + 1)).reverse.filterMap fun k =>
+      ps.find? (·.2 == path.take k) |>.map (·.1))
+  | none => []
+
+/-- `e` to the node with `id`, and if it does not handle it, to its ancestors in turn: the tree,
+and the requests of the node that handled it, or `none` if none did. -/
+def bubble (env : Env) (id : WidgetId) (e : Event) (n : Node Msg) :
+    Node Msg × Option (List (Req Msg)) :=
+  go (n.lineage id) n
+where
+  go : List WidgetId → Node Msg → Node Msg × Option (List (Req Msg))
+    | [], n => (n, none)
+    | a :: as, n =>
+      match n.handleAt env a e with
+      | (n', some reqs) => (n', some reqs)
+      | (n', none) => go as n'
 
 mutual
 /-- The tree with its messages mapped by `f`. -/

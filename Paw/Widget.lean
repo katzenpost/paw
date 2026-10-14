@@ -54,36 +54,70 @@ inductive Req (Msg : Type) where
   /-- Keyboard focus to the widget. -/
   | focus (id : WidgetId)
   | render
+  /-- Write the clipboard. The runtime does it only for input that designated the widget. -/
+  | copy (t : SafeText)
   deriving Repr, DecidableEq
 
 def Req.map {α β : Type} (f : α → β) : Req α → Req β
   | .emit m => .emit (f m)
   | .focus id => .focus id
   | .render => .render
+  | .copy t => .copy t
 
+/-- A widget as the tree holds it: functions over its state as a `Dynamic`. Widgets are written as
+a `Widget.Spec` over their own state type and built with `Widget.Spec.build`; keeping the state
+dynamic keeps nodes, trees and the runtime in `Type`, where `IO` can hold them. -/
 structure Widget (Msg : Type) where
   /-- Widgets merge only with widgets of the same kind. -/
   kind : String
-  State : Type
-  [stateName : TypeName State]
-  init : State
+  init : Dynamic
   /-- The state to keep, given the state of the widget this one replaces on a rebuild. -/
-  merge : State → State := id
-  sizeReq : Env → State → SizeReq × SizeReq
-  render : Env → State → Rect → Scene
+  merge : Dynamic → Dynamic
+  sizeReq : Env → Dynamic → SizeReq × SizeReq
+  render : Env → Dynamic → Rect → Scene
   render_within : ∀ env st v, (render env st v).Within v
-  handle : Env → State → Rect → Event → Option (State × List (Req Msg)) := fun _ _ _ _ => none
-  focusable : Bool := false
+  handle : Env → Dynamic → Rect → Event → Option (Dynamic × List (Req Msg))
+  focusable : Bool
   /-- Requests when the widget leaves the tree. -/
-  dispose : State → List (Req Msg) := fun _ => []
+  dispose : Dynamic → List (Req Msg)
 
-attribute [instance] Widget.stateName
+/-- A widget over its own state type `σ`. -/
+structure Widget.Spec (Msg σ : Type) where
+  kind : String
+  init : σ
+  merge : σ → σ := id
+  sizeReq : Env → σ → SizeReq × SizeReq
+  render : Env → σ → Rect → Scene
+  render_within : ∀ env st v, (render env st v).Within v
+  handle : Env → σ → Rect → Event → Option (σ × List (Req Msg)) := fun _ _ _ _ => none
+  focusable : Bool := false
+  dispose : σ → List (Req Msg) := fun _ => []
+
+namespace Widget.Spec
+
+variable {Msg σ : Type} [TypeName σ]
+
+/-- The state in `d`, or the initial state if `d` holds another type. -/
+def state (s : Widget.Spec Msg σ) (d : Dynamic) : σ := (d.get? σ).getD s.init
+
+def build (s : Widget.Spec Msg σ) : Widget Msg where
+  kind := s.kind
+  init := Dynamic.mk s.init
+  merge := fun d => Dynamic.mk (((d.get? σ).map s.merge).getD s.init)
+  sizeReq := fun env d => s.sizeReq env (s.state d)
+  render := fun env d v => s.render env (s.state d) v
+  render_within := fun env d v => s.render_within env (s.state d) v
+  handle := fun env d v e =>
+    (s.handle env (s.state d) v e).map fun (st, reqs) => (Dynamic.mk st, reqs)
+  focusable := s.focusable
+  dispose := fun d => s.dispose (s.state d)
+
+end Widget.Spec
 
 /-- The widget with its messages mapped by `f`, as a component's widgets are mapped into its
 parent's messages. -/
 def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β where
   kind := w.kind
-  State := w.State
   init := w.init
   merge := w.merge
   sizeReq := w.sizeReq
@@ -94,12 +128,9 @@ def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β whe
   dispose := fun st => (w.dispose st).map (Req.map f)
 
 /-- A widget that only holds children: it draws nothing and asks for nothing itself. -/
-def Widget.container {Msg : Type} (kind : String) : Widget Msg where
-  kind
-  State := NoState
-  init := {}
-  sizeReq := fun _ _ => ({}, {})
-  render := fun _ _ _ => Scene.empty
-  render_within := fun _ _ v => Scene.empty_within v
+def Widget.container {Msg : Type} (kind : String) : Widget Msg :=
+  Widget.Spec.build (σ := NoState)
+    { kind, init := {}, sizeReq := fun _ _ => ({}, {}), render := fun _ _ _ => Scene.empty
+      render_within := fun _ _ v => Scene.empty_within v }
 
 end Paw

@@ -1038,6 +1038,8 @@ dependencies = [
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1696,6 +1698,7 @@ dependencies = [
  "arboard",
  "benchmark",
  "cosmic-text",
+ "image",
  "lean-sys",
  "softbuffer",
  "tiny-skia",

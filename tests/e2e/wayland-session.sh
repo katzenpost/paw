@@ -80,6 +80,10 @@ wtype -s 200 -k Escape
 expect "dialog=false" "Escape cancels the confirmation"
 expect "plums" "and the list is kept"
 
+# A task makes a picture, which the app hands to an image widget.
+click load
+expect "picture=true" "a task's picture is shown"
+
 wtype -s 200 -M ctrl q -m ctrl
 expect_exit "ctrl-q quits"
 finish

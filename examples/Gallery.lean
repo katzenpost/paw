@@ -10,8 +10,8 @@ import Paw
 Every widget Paw has, in one window: a counter, a form with a password, a checkbox, a list whose
 rows keep their state as it changes, a scrolled text, two effects that need the user's choice:
 opening a link and copying, a menu in a popup that opens an alert and a confirmation, a tooltip,
-rows that fade in, a button disabled until it has something to do, and a switch to the dark
-theme. -/
+rows that fade in, a button disabled until it has something to do, a switch to the dark
+theme, icons, and a picture made by a task. -/
 
 namespace Gallery
 
@@ -37,6 +37,8 @@ inductive Msg where
   | clear
   | keep
   | dark (on : Bool)
+  | loadPicture
+  | picture (img : Except ImageError Image)
 
 structure Model where
   count : Int := 0
@@ -51,13 +53,25 @@ structure Model where
   about : Option Modal := none
   clearing : Option Modal := none
   dark : Bool := false
+  picture : Option Image := none
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
     a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened &&
-    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark
+    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture
 
-abbrev caps : List Cap := [.openUri, .clipboardWrite]
+abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
+
+/-- A picture made in memory: a sunset of 96 × 48 pixels. -/
+def sunset : IO (Except ImageError Image) :=
+  let (w, h) := (96, 48)
+  let px := (List.range (w * h)).foldl (init := ByteArray.emptyWithCapacity (w * h * 4)) fun b i =>
+    let (x, y) := ((i % w : Nat), (i / w : Nat))
+    let sun := (x - 48 : Int) ^ 2 + (y - 40 : Int) ^ 2 < 196
+    let (r, g, bl) := if sun then (250, 210, 60) else if y > 40 then (40, 60, 90)
+      else (200 - y * 2, 90 + y, 140)
+    ((b.push r.toUInt8).push g.toUInt8 |>.push bl.toUInt8).push 255
+  Image.ofRgba w h px
 
 def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .inc => modify fun (m, cs) => ({ m with count := m.count + 1 }, cs)
@@ -92,6 +106,8 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .clear => modify fun (m, cs) => ({ m with items := [], clearing := none }, cs)
   | _, .keep => modify fun (m, cs) => ({ m with clearing := none }, cs)
   | _, .dark on => modify fun (m, cs) => ({ m with dark := on }, cs)
+  | _, .loadPicture => emit (.task (.picture <$> sunset) (by decide))
+  | _, .picture r => modify fun (m, cs) => ({ m with picture := r.toOption }, cs)
 
 def view (m : Model) : Node Msg :=
   Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
@@ -110,6 +126,9 @@ def view (m : Model) : Node Msg :=
       Ui.row [Ui.text (SafeText.filter s), Ui.spacer, Ui.button "Remove" (.remove id) s!"remove-{id}"],
     Ui.height (px 120) <| Ui.scroll (Ui.paragraph (String.intercalate "\n" ((List.range 12).map fun i =>
       s!"Line {i + 1} of a text longer than its box."))) "scroll",
+    Ui.row ([Ui.icon .check, Ui.icon .warning, Ui.icon .chevronRight, Ui.button "Load picture" .loadPicture "load"] ++
+      (m.picture.toList.map fun img =>
+        Ui.width (px 56) (Ui.height (px 28) (Ui.image img (.text (SafeName.filter "A sunset")) .fill "picture")))),
     Ui.row [Ui.button "Open link" .openLink "link", Ui.button "Copy name" .copyName "copy",
       Ui.label s!"links opened: {m.opened}" "opened"]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")

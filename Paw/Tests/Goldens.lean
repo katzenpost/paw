@@ -126,6 +126,20 @@ def corpusRow (payload : String) : Node Unit :=
   Node.container hgrid.toLayout [Node.leaf (swatch (Color.rgb 200 30 30)),
     Ui.text (SafeText.filter payload), Node.leaf (swatch (Color.rgb 30 30 200))]
 
+/-- Holds `a` until it is called: what a scene draws by id must be alive until it is drawn. -/
+@[noinline] def keepAlive {α : Type} (a : α) : IO Unit := do
+  let r ← IO.mkRef (some a)
+  r.set none
+
+/-- The fixture photo in a 100 × 60 box in each way of fitting it, framed, then every icon. -/
+def imageFits (img : Image) : Node Unit :=
+  let framed (fit : ImageFit) : Node Unit :=
+    Ui.width (px 100) (Ui.height (px 60) (Ui.image img .decorative fit))
+  Ui.pad (px 8) <| Ui.col [
+    Ui.row ([ImageFit.none, .fill, .width, .height, .either].map framed) (px 8),
+    Ui.row ([Icon.close, .plus, .minus, .check, .chevronDown, .chevronRight, .warning].map
+      (Ui.icon · (size := px 24))) (px 8)]
+
 def check (update : Bool) (name : String) (scene : Scene) (w h scale : Nat) : IO Bool := do
   let png := Linux.renderPng scene w h scale
   let path := goldenDir / s!"{name}.png"
@@ -160,6 +174,17 @@ def main (args : List String) : IO UInt32 := do
   let mut ok := true
   for (name, scene, w, h, scale) in goldens do
     ok := (← check update name scene w h scale) && ok
+  -- A scene names images by id; the images themselves are kept alive until they are drawn.
+  match ← Image.decode (← IO.FS.readBinFile "tests/fixtures/photo.png") with
+  | .ok img =>
+    ok := (← check update "image-fit" (draw (imageFits img) 560 120) 560 120 1000) && ok
+    keepAlive img
+  | .error _ =>
+    IO.println "FAIL image-fit: the fixture does not decode"
+    ok := false
+  let withPicture := (gallery.taskResult (.picture (← _root_.Gallery.sunset)) 1000).1
+  ok := (← check update "gallery-picture" (sceneOf withPicture) 640 560 1000) && ok
+  keepAlive withPicture
   -- The attack corpus stays in its cell.
   let (w, h) := (300, 30)
   let empty := Linux.renderPng (draw (corpusRow "") w h) w h

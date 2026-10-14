@@ -10,6 +10,7 @@
 pub mod codec;
 pub mod access;
 pub mod events;
+pub mod image;
 pub mod render;
 pub mod scene;
 pub mod text;
@@ -19,7 +20,7 @@ use codec::{Reader, Writer};
 use lean_sys::*;
 
 /// The version of the byte formats shared with Lean, which `Paw.Ffi.abiVersion` must match.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 #[no_mangle]
 pub extern "C" fn paw_abi_version(_unit: *mut lean_object) -> u32 {
@@ -179,6 +180,59 @@ pub unsafe extern "C" fn paw_window_screenshot() -> lean_obj_res {
 #[no_mangle]
 pub unsafe extern "C" fn paw_now() -> lean_obj_res {
     io_ok(lean_uint64_to_nat(window::now()))
+}
+
+/// The class of Lean's handles on images: finalizing one stops keeping its pixels.
+fn image_class() -> *mut lean_external_class {
+    static CLASS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    unsafe extern "C" fn finalize(p: *mut std::ffi::c_void) {
+        image::release(*Box::from_raw(p as *mut u64));
+    }
+    unsafe extern "C" fn foreach(_: *mut std::ffi::c_void, _: b_lean_obj_arg) {}
+    *CLASS.get_or_init(|| unsafe { lean_register_external_class(Some(finalize), Some(foreach)) as usize })
+        as *mut lean_external_class
+}
+
+/// The outcome of making an image, as Lean reads it: a header, either the error's tag or 0 and
+/// the width, height and id; and a handle that keeps the pixels while Lean holds it.
+unsafe fn image_result(r: Result<(u32, u32, u64), image::ImageError>) -> lean_obj_res {
+    let mut w = Writer::default();
+    let id = match r {
+        Ok((width, height, id)) => {
+            w.nat(0);
+            w.nat(width as u64);
+            w.nat(height as u64);
+            w.nat(id);
+            id
+        }
+        Err(e) => {
+            w.nat(e as u64);
+            0
+        }
+    };
+    let handle = lean_alloc_external(image_class(), Box::into_raw(Box::new(id)) as *mut _);
+    let pair = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(pair, 0, byte_array(&w.bytes));
+    lean_ctor_set(pair, 1, handle);
+    io_ok(pair)
+}
+
+/// Decodes a PNG or JPEG and keeps its pixels for drawing.
+#[no_mangle]
+pub unsafe extern "C" fn paw_image_decode(a: b_lean_obj_arg, _world: lean_obj_arg) -> lean_obj_res {
+    image_result(image::decode(bytes_of(a)).and_then(|(w, h, px)| image::register(w, h, &px).map(|id| (w, h, id))))
+}
+
+/// Keeps straight RGBA pixels of a `w` × `h` image for drawing.
+#[no_mangle]
+pub unsafe extern "C" fn paw_image_of_rgba(w: u32, h: u32, a: b_lean_obj_arg, _world: lean_obj_arg) -> lean_obj_res {
+    image_result(image::register(w, h, bytes_of(a)).map(|id| (w, h, id)))
+}
+
+/// How many images are kept.
+#[no_mangle]
+pub unsafe extern "C" fn paw_image_count(_world: lean_obj_arg) -> lean_obj_res {
+    io_ok(lean_usize_to_nat(image::count()))
 }
 
 #[cfg(test)]

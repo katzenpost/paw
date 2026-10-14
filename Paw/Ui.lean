@@ -9,6 +9,7 @@ import Paw.Widgets.TextField
 import Paw.Widgets.Scroll
 import Paw.Widgets.Overlay
 import Paw.Widgets.Anim
+import Paw.Widgets.Image
 
 /-! # Building views
 
@@ -96,6 +97,17 @@ def popup (isOpen : Bool) (anchor content : Node Msg) (onDismiss : Msg) (key : O
     Node Msg :=
   let pop := Node.containerWith (popupWidget onDismiss) (padLayout (px 4)) [content]
   Node.container (box { expand := true }) (anchor :: if isOpen then [pop.overlay .popup] else []) key
+
+/-- `img`, fitted to its box by `fit`, described to assistive technology by `alt`, or marked as
+decoration. -/
+def image (img : Image) (alt : ImageAlt) (fit : ImageFit := .either) (key : Option String := none) :
+    Node Msg :=
+  Node.leaf (Widgets.image img alt fit) key
+
+/-- An icon `size` units square. -/
+def icon (k : Icon) (alt : ImageAlt := .decorative) (size : Int := px 16) (key : Option String := none) :
+    Node Msg :=
+  Node.leaf (Widgets.icon k alt size) key
 
 /-- `child` and everything in it drawn with `theme`, on the theme's background: how a part of the
 window, or all of it, switches theme. -/

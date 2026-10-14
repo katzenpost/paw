@@ -102,6 +102,8 @@ inductive Role where
   | window
   /-- A modal dialog, above everything else. -/
   | dialog
+  /-- An image or icon, named by its description. -/
+  | image
   deriving Repr, DecidableEq, Inhabited
 
 /-- How a widget describes itself to assistive technology such as a screen reader. Names and values

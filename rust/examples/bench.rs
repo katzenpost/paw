@@ -50,4 +50,19 @@ fn main() {
     report("render a screen of 22 rows, 800x600", benchmark_block!(100, { black_box(render(&screen, 800, 600, 1.0, &mut t)); }));
     report("render a screen of 22 rows, 1600x1200 (2x)", benchmark_block!(50, { black_box(render(&screen, 1600, 1200, 2.0, &mut t)); }));
     report("render 400 rows clipped to 800x600", benchmark_block!(50, { black_box(render(&big, 800, 600, 1.0, &mut t)); }));
+    // Images: a 1024 × 1024 photo-like PNG, and 100 thumbnails of a 64 × 64 image on one screen.
+    let photo = image::RgbaImage::from_fn(1024, 1024, |x, y| image::Rgba([(x % 256) as u8, (y % 256) as u8, ((x ^ y) % 256) as u8, 255]));
+    let mut png = Vec::new();
+    photo.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    report("decode a 1024x1024 PNG", benchmark_block!(10, { black_box(paw_ffi::image::decode(black_box(&png)).unwrap()); }));
+    let thumb = paw_ffi::image::register(64, 64, &[128; 64 * 64 * 4]).unwrap();
+    let thumbs = Scene {
+        items: (0..100)
+            .map(|i| {
+                let r = Rect { x0: (i % 10) * 80 * 64, y0: (i / 10) * 60 * 64, x1: ((i % 10) * 80 + 72) * 64, y1: ((i / 10) * 60 + 54) * 64 };
+                (r, Draw::Image { rect: r, id: thumb, alpha: 255 })
+            })
+            .collect(),
+    };
+    report("render 100 images, 800x600", benchmark_block!(50, { black_box(render(&thumbs, 800, 600, 1.0, &mut t)); }));
 }

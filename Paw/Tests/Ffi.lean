@@ -45,7 +45,7 @@ def randomText (g : Rng) : SafeText × Rng := Id.run do
   return (SafeText.filter s, g)
 
 def randomDraw (g : Rng) : Draw × Rng :=
-  let (kind, g) := g.next 3
+  let (kind, g) := g.next 5
   let (r, g) := randomRect g
   let (c, g) := randomColor g
   let (i, g) := randomInt g
@@ -53,6 +53,13 @@ def randomDraw (g : Rng) : Draw × Rng :=
   match kind with
   | 0 => (.fill r c i, g)
   | 1 => (.stroke r c i j, g)
+  | 2 => (.image r j.natAbs c.a, g)
+  | 3 =>
+    let (n, g) := g.next 6
+    let pts : List Point := (List.range n).map fun (k : Nat) => ⟨i + Int.ofNat k, j - Int.ofNat k⟩
+    let (f, g) := g.next 2
+    let (st, g) := g.next 2
+    (.path pts (f == 1) (if f == 1 then some c else none) (if st == 1 then some (c, i) else none), g)
   | _ =>
     let (t, g) := randomText g
     let (b, g) := g.next 2

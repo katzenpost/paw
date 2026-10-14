@@ -18,6 +18,7 @@ fn role(r: u64) -> Role {
         5 => Role::ScrollView,
         6 => Role::Window,
         7 => Role::Dialog,
+        8 => Role::Image,
         _ => Role::GenericContainer,
     }
 }

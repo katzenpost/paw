@@ -180,6 +180,27 @@ def char : Codec Char :=
 def string : Codec String :=
   (list char).map String.ofList String.toList (fun _ => String.ofList_toList)
 
+/-- `none` as false; `some a` as true, then `a`. -/
+def option {α : Type} (a : Codec α) : Codec (Option α) where
+  enc := fun
+    | none => bool.enc false
+    | some x => bool.enc true ++ a.enc x
+  dec := fun bs => do
+    let (b, bs) ← bool.dec bs
+    if b then
+      let (x, bs) ← a.dec bs
+      pure (some x, bs)
+    else pure (none, bs)
+  roundtrip := by
+    intro o rest
+    cases o <;> simp [bool.roundtrip, a.roundtrip, List.append_assoc]
+  put := fun o bs => match o with
+    | none => bool.put false bs
+    | some x => a.put x (bool.put true bs)
+  put_spec := by
+    intro o b
+    cases o <;> simp [bool.put_spec, a.put_spec, List.append_assoc]
+
 /-- Decodes `bytes` as exactly one value, with nothing left over. -/
 def decodeAll {α : Type} (c : Codec α) (bytes : List UInt8) : Option α :=
   match c.dec bytes with

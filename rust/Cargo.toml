@@ -14,6 +14,7 @@ accesskit = "0.21"
 accesskit_winit = "0.29.2"
 arboard = { version = "3", features = ["wayland-data-control"] }
 cosmic-text = "0.14"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 lean-sys = { git = "https://github.com/katzenpost/lean-sys", rev = "ac11ff152cc82bccd0ef18f45384ac5acb091260", default-features = false, features = ["mimalloc"] }
 softbuffer = "0.4"
 tiny-skia = "0.11"

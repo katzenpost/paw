@@ -11,7 +11,7 @@ decodes. -/
 namespace Paw.Ffi
 
 /-- The version of the byte formats this library speaks. -/
-def abiVersion : UInt32 := 1
+def abiVersion : UInt32 := 2
 
 @[extern "paw_abi_version"] opaque rustAbiVersion : Unit → UInt32
 
@@ -40,6 +40,23 @@ cannot be compared. -/
 /-- The pixels outside `(x0, y0)`–`(x1, y1)` that differ between two PNGs. -/
 @[extern "paw_png_diff_outside"]
 opaque pngDiffOutside : @& ByteArray → @& ByteArray → UInt32 → UInt32 → UInt32 → UInt32 → UInt64
+
+/-- Pixels the Rust layer keeps for drawing, for as long as Lean holds this handle. -/
+opaque ImageHandle.Pointed : NonemptyType
+
+def ImageHandle : Type := ImageHandle.Pointed.type
+
+instance : Nonempty ImageHandle := ImageHandle.Pointed.property
+
+/-- Decodes a PNG or JPEG and keeps its pixels: a header, either an error's tag or 0, width, height
+and id, and the handle. -/
+@[extern "paw_image_decode"] opaque imageDecode : @& ByteArray → IO (ByteArray × ImageHandle)
+
+/-- Keeps straight RGBA pixels of a `w` × `h` image, with the same result as `imageDecode`. -/
+@[extern "paw_image_of_rgba"] opaque imageOfRgba : UInt32 → UInt32 → @& ByteArray → IO (ByteArray × ImageHandle)
+
+/-- How many images the Rust layer keeps. -/
+@[extern "paw_image_count"] opaque imageCount : IO Nat
 
 @[extern "paw_window_open"] opaque windowOpen : @& String → UInt32 → UInt32 → IO Unit
 @[extern "paw_window_poll"] opaque windowPoll : UInt32 → IO ByteArray

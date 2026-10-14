@@ -260,6 +260,7 @@ One message, file or image must not be able to make the app unusable. Set limits
 | Notifications | 1 per conversation per 10 s | Coalesce |
 
 - Read an image's dimensions from its header, and check them against the limit before decoding, so a small file cannot claim a huge canvas.
+- Identify a decoded image by a handle the app assigned, not by a hash of its content: content crafted to collide the hash would be drawn in place of another image, such as a trusted icon.
 - Decode images and shape long text off the UI thread.
 - Rasterize vector images from elsewhere with no external references and no scripts, and with the same size caps as other images.
 - Shape and measure each item once, when it arrives or when the width changes, not on every frame.

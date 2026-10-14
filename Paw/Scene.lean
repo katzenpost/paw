@@ -60,6 +60,10 @@ inductive Draw where
   | stroke (r : Rect) (c : Color) (width : Int) (radius : Int)
   /-- One line of text whose line box has its top left at the point. -/
   | text (at_ : Point) (t : SafeText) (style : TextStyle)
+  /-- The image with id `id` scaled into `r`, at opacity `alpha`/255. -/
+  | image (r : Rect) (id : Nat) (alpha : UInt8)
+  /-- A path through the points, closed if `closed`, filled and stroked as given. -/
+  | path (pts : List Point) (closed : Bool) (fill : Option Color) (stroke : Option (Color × Int))
   deriving Repr, DecidableEq, Inhabited
 
 namespace Scene
@@ -72,11 +76,15 @@ def rectCodec : Codec Rect :=
 def pointCodec : Codec Point :=
   (Codec.pair Codec.int Codec.int).map (fun (x, y) => ⟨x, y⟩) (fun p => (p.x, p.y)) (fun _ => rfl)
 
+def pointsCodec : Codec (List Point) := Codec.list pointCodec
+
+def strokeCodec : Codec (Option (Color × Int)) := Codec.option (Codec.pair Color.codec Codec.int)
+
 end Scene
 
 namespace Draw
 
-open Scene (rectCodec pointCodec)
+open Scene (rectCodec pointCodec pointsCodec strokeCodec)
 
 def enc : Draw → List UInt8
   | .fill r c radius => Codec.nat.enc 0 ++ rectCodec.enc r ++ Color.codec.enc c ++ Codec.int.enc radius
@@ -84,6 +92,10 @@ def enc : Draw → List UInt8
     Codec.nat.enc 1 ++ rectCodec.enc r ++ Color.codec.enc c ++ Codec.int.enc w ++
       Codec.int.enc radius
   | .text p t s => Codec.nat.enc 2 ++ pointCodec.enc p ++ SafeText.codec.enc t ++ TextStyle.codec.enc s
+  | .image r id a => Codec.nat.enc 3 ++ rectCodec.enc r ++ Codec.nat.enc id ++ Codec.u8.enc a
+  | .path ps c f s =>
+    Codec.nat.enc 4 ++ pointsCodec.enc ps ++ Codec.bool.enc c ++ (Codec.option Color.codec).enc f ++
+      strokeCodec.enc s
 
 def dec (bs : List UInt8) : Option (Draw × List UInt8) := do
   let (tag, bs) ← Codec.nat.dec bs
@@ -104,13 +116,25 @@ def dec (bs : List UInt8) : Option (Draw × List UInt8) := do
     let (t, bs) ← SafeText.codec.dec bs
     let (s, bs) ← TextStyle.codec.dec bs
     pure (.text p t s, bs)
+  | 3 =>
+    let (r, bs) ← rectCodec.dec bs
+    let (id, bs) ← Codec.nat.dec bs
+    let (a, bs) ← Codec.u8.dec bs
+    pure (.image r id a, bs)
+  | 4 =>
+    let (ps, bs) ← pointsCodec.dec bs
+    let (c, bs) ← Codec.bool.dec bs
+    let (f, bs) ← (Codec.option Color.codec).dec bs
+    let (s, bs) ← strokeCodec.dec bs
+    pure (.path ps c f s, bs)
   | _ => none
 
 theorem roundtrip (d : Draw) (rest : List UInt8) : dec (enc d ++ rest) = some (d, rest) := by
   cases d <;>
     simp [enc, dec, List.append_assoc, Codec.nat.roundtrip, rectCodec.roundtrip,
       pointCodec.roundtrip, Color.codec.roundtrip, Codec.int.roundtrip, SafeText.codec.roundtrip,
-      TextStyle.codec.roundtrip]
+      TextStyle.codec.roundtrip, Codec.u8.roundtrip, pointsCodec.roundtrip, Codec.bool.roundtrip,
+      (Codec.option Color.codec).roundtrip, strokeCodec.roundtrip]
 
 /-- `enc` written straight into bytes. -/
 def put (d : Draw) (b : ByteArray) : ByteArray :=
@@ -119,6 +143,9 @@ def put (d : Draw) (b : ByteArray) : ByteArray :=
   | .stroke r c w radius =>
     Codec.int.put radius (Codec.int.put w (Color.codec.put c (rectCodec.put r (Codec.nat.put 1 b))))
   | .text p t s => TextStyle.codec.put s (SafeText.codec.put t (pointCodec.put p (Codec.nat.put 2 b)))
+  | .image r id a => Codec.u8.put a (Codec.nat.put id (rectCodec.put r (Codec.nat.put 3 b)))
+  | .path ps c f s =>
+    strokeCodec.put s ((Codec.option Color.codec).put f (Codec.bool.put c (pointsCodec.put ps (Codec.nat.put 4 b))))
 
 theorem put_spec (d : Draw) (b : ByteArray) : (put d b).data.toList = b.data.toList ++ enc d := by
   cases d <;> simp [put, enc, Codec.put_spec, List.append_assoc]
@@ -190,6 +217,8 @@ def Draw.withAlpha (a : Nat) : Draw → Draw
   | .fill r c radius => .fill r (c.scaleAlpha a) radius
   | .stroke r c w radius => .stroke r (c.scaleAlpha a) w radius
   | .text p t s => .text p t { s with color := s.color.scaleAlpha a }
+  | .image r id o => .image r id (o.toNat * min a 255 / 255).toUInt8
+  | .path ps c f s => .path ps c (f.map (·.scaleAlpha a)) (s.map fun (col, w) => (col.scaleAlpha a, w))
 
 /-- The scene drawn `a`/255 opaque, as a fade draws it. -/
 def withAlpha (a : Nat) (s : Scene) : Scene := ⟨s.items.map fun (r, d) => (r, Draw.withAlpha a d)⟩
@@ -198,6 +227,8 @@ def Draw.translate (p : Point) : Draw → Draw
   | .fill r c radius => .fill (r.translate p) c radius
   | .stroke r c w radius => .stroke (r.translate p) c w radius
   | .text q t s => .text (q + p) t s
+  | .image r id a => .image (r.translate p) id a
+  | .path ps c f s => .path (ps.map (· + p)) c f s
 
 /-- The scene moved by `p`. -/
 def translate (s : Scene) (p : Point) : Scene :=

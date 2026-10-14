@@ -7,8 +7,8 @@
 use crate::scene::{Color, Draw, Rect, Scene};
 use crate::text::Text;
 use tiny_skia::{
-    FillRule, IntRect, Mask, Paint, Path, PathBuilder, Pixmap, PremultipliedColorU8, Stroke,
-    Transform,
+    FillRule, FilterQuality, IntRect, LineCap, LineJoin, Mask, Paint, Path, PathBuilder, Pattern,
+    Pixmap, PremultipliedColorU8, SpreadMode, Stroke, Transform,
 };
 
 /// Units per logical pixel, as in `Paw.unitsPerPx`.
@@ -114,6 +114,50 @@ fn draw_item(pm: &mut Pixmap, clip: &Rect, d: &Draw, scale: f32, text: &mut Text
                 pm.stroke_path(&path, &paint(color), &stroke, Transform::identity(), Some(&m));
             }
         }
+        Draw::Image { rect, id, alpha } => {
+            let Some(src) = crate::image::get(*id) else { return };
+            let (l, t, r, b) = (px(rect.x0, scale), px(rect.y0, scale), px(rect.x1, scale), px(rect.y1, scale));
+            if r <= l || b <= t {
+                return;
+            }
+            // The image fills its rectangle cut to the clip, as a pattern: no mask is needed.
+            let cl = clip.to_rect();
+            let Some(area) = tiny_skia::Rect::from_ltrb(l.max(cl.left()), t.max(cl.top()), r.min(cl.right()), b.min(cl.bottom()))
+            else {
+                return;
+            };
+            let tf = Transform::from_row((r - l) / src.width() as f32, 0.0, 0.0, (b - t) / src.height() as f32, l, t);
+            let shader = Pattern::new(src.as_ref().as_ref(), SpreadMode::Pad, FilterQuality::Bilinear, *alpha as f32 / 255.0, tf);
+            let paint = Paint { shader, anti_alias: false, ..Paint::default() };
+            pm.fill_rect(area, &paint, Transform::identity(), None);
+        }
+        Draw::Path { points, closed, fill, stroke } => {
+            let mut pb = PathBuilder::new();
+            for (i, p) in points.iter().enumerate() {
+                let (x, y) = (px(p.x, scale), px(p.y, scale));
+                if i == 0 {
+                    pb.move_to(x, y);
+                } else {
+                    pb.line_to(x, y);
+                }
+            }
+            if *closed {
+                pb.close();
+            }
+            let (Some(path), Some(m)) = (pb.finish(), mask(clip, w, h)) else { return };
+            if let Some(c) = fill {
+                pm.fill_path(&path, &paint(c), FillRule::Winding, Transform::identity(), Some(&m));
+            }
+            if let Some((c, width)) = stroke {
+                let stroke = Stroke {
+                    width: px(*width, scale).max(0.5),
+                    line_cap: LineCap::Round,
+                    line_join: LineJoin::Round,
+                    ..Stroke::default()
+                };
+                pm.stroke_path(&path, &paint(c), &stroke, Transform::identity(), Some(&m));
+            }
+        }
         Draw::Text { at, text: s, style } => {
             let size = px(style.size, scale);
             text.draw(s, size, style.bold, px(at.x, scale), px(at.y, scale), |x, y, a| {
@@ -191,6 +235,24 @@ mod tests {
     fn pixel(pm: &Pixmap, x: u32, y: u32) -> (u8, u8, u8) {
         let p = pm.pixel(x, y).unwrap();
         (p.red(), p.green(), p.blue())
+    }
+
+    #[test]
+    fn images_and_paths_are_clipped() {
+        let mut t = Text::bundled();
+        let id = crate::image::register(2, 2, &[0, 0, 255, 255].repeat(4)).unwrap();
+        let s = Scene { items: vec![(r(0, 0, 5, 5), Draw::Image { rect: r(0, 0, 10, 10), id, alpha: 255 })] };
+        let pm = render(&s, 10, 10, 1.0, &mut t);
+        assert_eq!(pixel(&pm, 2, 2), (0, 0, 255), "the image is drawn, scaled up");
+        assert_eq!(pixel(&pm, 7, 7), (255, 255, 255), "but not past its clip");
+        let gone = Scene { items: vec![(r(0, 0, 10, 10), Draw::Image { rect: r(0, 0, 10, 10), id: 0, alpha: 255 })] };
+        assert_eq!(pixel(&render(&gone, 10, 10, 1.0, &mut t), 5, 5), (255, 255, 255), "an unknown image draws nothing");
+        crate::image::release(id);
+        let p = |x: i64, y: i64| Point { x: x * 64, y: y * 64 };
+        let tri = Draw::Path { points: vec![p(0, 0), p(10, 0), p(10, 10), p(0, 10)], closed: true, fill: Some(RED), stroke: None };
+        let pm = render(&Scene { items: vec![(r(0, 0, 5, 10), tri)] }, 10, 10, 1.0, &mut t);
+        assert_eq!(pixel(&pm, 2, 5), (255, 0, 0));
+        assert_eq!(pixel(&pm, 7, 5), (255, 255, 255));
     }
 
     #[test]

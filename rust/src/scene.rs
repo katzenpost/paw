@@ -40,6 +40,10 @@ pub enum Draw {
     Fill { rect: Rect, color: Color, radius: i64 },
     Stroke { rect: Rect, color: Color, width: i64, radius: i64 },
     Text { at: Point, text: String, style: TextStyle },
+    /// The image with an id from `image::register`, scaled into `rect`, at opacity `alpha`.
+    Image { rect: Rect, id: u64, alpha: u8 },
+    /// A path through `points`, closed if `closed`, filled and stroked if given.
+    Path { points: Vec<Point>, closed: bool, fill: Option<Color>, stroke: Option<(Color, i64)> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -64,6 +68,18 @@ fn draw(r: &mut Reader) -> Option<Draw> {
             text: r.string()?,
             style: TextStyle { size: r.int()?, color: color(r)?, bold: r.bool()? },
         },
+        3 => Draw::Image { rect: rect(r)?, id: r.nat()?, alpha: r.u8()? },
+        4 => {
+            let n = r.count()?;
+            let mut points = Vec::with_capacity(n);
+            for _ in 0..n {
+                points.push(Point { x: r.int()?, y: r.int()? });
+            }
+            let closed = r.bool()?;
+            let fill = if r.bool()? { Some(color(r)?) } else { None };
+            let stroke = if r.bool()? { Some((color(r)?, r.int()?)) } else { None };
+            Draw::Path { points, closed, fill, stroke }
+        }
         _ => return None,
     })
 }
@@ -108,6 +124,30 @@ impl Scene {
                     put_color(&mut w, &style.color);
                     w.bool(style.bold);
                 }
+                Draw::Image { rect, id, alpha } => {
+                    w.nat(3);
+                    put_rect(&mut w, rect);
+                    w.nat(*id);
+                    w.u8(*alpha);
+                }
+                Draw::Path { points, closed, fill, stroke } => {
+                    w.nat(4);
+                    w.nat(points.len() as u64);
+                    for p in points {
+                        w.int(p.x);
+                        w.int(p.y);
+                    }
+                    w.bool(*closed);
+                    w.bool(fill.is_some());
+                    if let Some(c) = fill {
+                        put_color(&mut w, c);
+                    }
+                    w.bool(stroke.is_some());
+                    if let Some((c, width)) = stroke {
+                        put_color(&mut w, c);
+                        w.int(*width);
+                    }
+                }
             }
         }
         w.bytes
@@ -147,6 +187,17 @@ mod tests {
                         style: TextStyle { size: 896, color: c, bold: true },
                     },
                 ),
+                (r, Draw::Image { rect: r, id: 7, alpha: 128 }),
+                (
+                    r,
+                    Draw::Path {
+                        points: vec![Point { x: 0, y: 0 }, Point { x: 640, y: -64 }],
+                        closed: true,
+                        fill: Some(c),
+                        stroke: Some((c, 128)),
+                    },
+                ),
+                (r, Draw::Path { points: vec![], closed: false, fill: None, stroke: None }),
             ],
         }
     }

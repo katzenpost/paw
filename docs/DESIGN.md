@@ -44,6 +44,7 @@ CryptWalker already relies on this. `NIKE` carries `commutes` and `derive_safe`,
 | --- | --- | --- |
 | Windows and input | winit 0.30, driven with `pump_app_events` | Lean owns the loop and polls, as monomer polls SDL; no Lean code runs inside a winit callback. winit picks Wayland or X11 at startup |
 | Drawing a Scene | tiny-skia, shown with softbuffer | Draws on the CPU, so the same scene gives the same pixels everywhere: golden images can be compared exactly, and no GPU is needed under Xvfb or a headless compositor |
+| Decoding images | image, with only its PNG and JPEG decoders | No SVG and no other formats, so that less code reads content from elsewhere |
 | Text shaping, measuring, drawing | cosmic-text, with DejaVu Sans bundled | Measuring and drawing use one font system, so text is drawn as wide as layout measured it. Offscreen renders use only the bundled fonts; a window adds the system's for characters they lack |
 | Clipboard | arboard, with Wayland's data-control protocol | The clipboard is read only when the user presses Ctrl-V, which becomes a `paste` event |
 | Opening links, notifications | `xdg-open` and `notify-send`, run with the link or text as arguments, never through a shell | Lean has already checked the link |
@@ -107,6 +108,8 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | A scroll places its child past its own box | The child is laid out in a content rectangle the scroll names, and drawn clipped to the scroll's box | `assign_within` holds relative to the content rectangle; the clip law is unchanged |
 | Shrinking flexible sizes in one pass, clamped at zero, so a child weighted to give up more than it has leaves the rest overflowing | Shrinking in rounds: what one child cannot give, the others give next round | Children fit whenever their rigid sizes do; a random test checks it |
 | A widget opens an overlay with the `SetOverlay` request and closes it with `ResetOverlay` | An overlay is a node of the view, marked with `Node.overlay`; it is open while the view has it | One direction for data to flow: the model says what is open |
+| The image widget reads files and fetches links itself | An app gets the bytes with a task and hands a decoded `Image` to the widget, which only shows it | Widgets do no IO; reading a file or the network is an effect the app's capabilities govern |
+| Images are cached by path or link | An image's pixels stay in Rust under an id from a counter, freed when Lean drops the `Image` | No content can collide a hash to draw as another image, and Lean's reference counting says exactly when the platform may let go |
 | A theme is any record of colors and styles | A `Theme` carries `contrast_ok` and `focus_visible`, decided when it is written | Text is readable and focus can be seen in every state of every control; an unreadable theme does not compile |
 | `RenderEvery` and `RenderStop` requests start and stop a widget's timer, and while any runs, the loop draws 60 frames a second | A widget declares `every`, how often it wants `Event.tick`, as a function of its state; the loop sleeps until the next tick is due | A widget that leaves the tree or changes state stops ticking with nothing to undo; an idle app uses no CPU |
 | `alert` and `confirm` can be opened by any message, and their accept button acts on any click | A modal opens only with a `Modal` token made from the designation of the input being handled; `confirm`'s accept button acts only on a designated click | Dialogs come only from the user's actions, and ignore input until they are stable (guidelines, Input) |
@@ -296,6 +299,24 @@ The ratio needs relative luminance, which is defined with real numbers. Paw comp
 
 `Ui.themed theme child` gives a subtree a theme of its own, on that theme's background. The tree passes the nearest theme down as it measures, places, draws and delivers, and an overlay drawn apart from the tree takes the theme of its ancestors, so a popup in a dark part of the window is dark too. `PAW_THEME=dark` picks the theme the app starts with. A disabled node (`Ui.enabled false`) takes no input or focus and is drawn in its style's disabled look. The pointer takes the shape the widget under it names, such as the text cursor over a field, and the platform is asked only when that changes.
 
+### Images
+
+An app decodes an image with `Image.decode`, from bytes it got with a task, or makes one from pixels with `Image.ofRgba`. The Rust layer decodes PNG and JPEG only, reads the image's size from its header, and refuses one wider or taller than 8192 pixels or larger than 64 MiB of RGBA before allocating anything, so a small file that claims a huge canvas, or inflates to one, costs nothing. The tests decode such files from `tests/fixtures`.
+
+The pixels stay in the Rust layer, where they are drawn. Lean's `Image` holds them through an external object whose finalizer releases them, so the platform keeps an image exactly as long as the app refers to it, and no request is needed to add or drop one. A scene names an image by id: `Draw.image r id alpha`, scaled into `r`, which `ImageFit` computes in Lean, and clipped like any other item. The id comes from a counter in the Rust layer, and `Image`'s constructor is private, so two images never share an id and an app cannot name one it does not hold. A content hash would let content crafted to collide it draw as another image, a trusted icon say.
+
+An image widget must say what the image is to assistive technology, by its type:
+
+```lean
+inductive ImageAlt where
+  | text (alt : SafeName)
+  | decorative
+```
+
+There is no default: an image is described, or explicitly decoration that a screen reader passes over.
+
+Icons are drawn from paths, `Draw.path`, in the theme's text color: close, plus, minus, check, two chevrons and a warning sign.
+
 ### Authority and origin
 
 Effects that use authority need two things: a capability the component declared, and a designation from the input being handled, of a widget whose key is the effect's target. The app knows its widgets' keys, such as a message's id, and never their `WidgetId`s.
@@ -446,7 +467,7 @@ The loop sleeps in the platform's poll until an event or `Runtime.nextDeadline`,
 
 ## Accessibility
 
-A widget may describe itself with an `Access`: a role (label, button, check box, text input, password input, scroll view, dialog), a name, and a value or checked state. Names and values are `SafeText`, filtered as anything on screen is, because a screen reader speaks them in the same voice as the app's own words. `Node.accessTree` flattens the tree into what assistive technology sees: a window over the widgets that describe themselves, with containers that do not left out. Each frame sends it beside the scene, and the Rust layer hands it to AccessKit.
+A widget may describe itself with an `Access`: a role (label, button, check box, text input, password input, scroll view, dialog, image), a name, and a value or checked state. Names and values are `SafeText`, filtered as anything on screen is, because a screen reader speaks them in the same voice as the app's own words. `Node.accessTree` flattens the tree into what assistive technology sees: a window over the widgets that describe themselves, with containers that do not left out. Each frame sends it beside the scene, and the Rust layer hands it to AccessKit.
 
 - **A password field has a role and no value.** Lean never sends its value, and the Rust layer would drop one if it came.
 - **A dialog is modal.** Its panel has the dialog role, named by its title, and AccessKit marks it modal. While a modal is open, the runtime refuses a screen reader's actions on anything beneath it, and a refused modal is left out of the tree.

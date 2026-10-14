@@ -1,3 +1,4 @@
 /.lake/
 /rust/target/
 /tests/goldens/actual/
+/docbuild/.lake/

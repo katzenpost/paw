@@ -16,6 +16,11 @@ open Lean
 
 namespace Paw.Tests.Coverage
 
+/-- A name's last component, if it is a string. -/
+def lastString : Name → String
+  | .str _ s => s
+  | _ => ""
+
 def inTests (m : Name) : Bool := (`Paw.Tests).isPrefixOf m
 
 def inLibrary (m : Name) : Bool := (`Paw).isPrefixOf m && !inTests m
@@ -44,7 +49,7 @@ def handWritten (env : Environment) (n : Name) : Bool :=
       c.startsWith "below"
   !generated && !user.isInternalDetail && !user.hasMacroScopes && !isAuxRecursor env n && !isNoConfusion env n
     && !(env.isProjectionFn n) && !routineInstance env n
-    && !["ctorIdx", "noConfusionType", "ctorElimType", "toCtorIdx", "ofNat"].contains n.getString!
+    && !["ctorIdx", "noConfusionType", "ctorElimType", "toCtorIdx", "ofNat"].contains (lastString n)
     && !(Meta.Match.Extension.getMatcherInfo? env n).isSome
 
 def candidates (env : Environment) : Array Name :=
@@ -71,7 +76,7 @@ def reached (env : Environment) : NameSet := Id.run do
       -- reaches the definition.
       let twin := n.str "_unsafe_rec"
       if env.contains twin && !seen.contains twin then todo := todo.push twin
-      if n.getString! == "_unsafe_rec" && !seen.contains n.getPrefix then todo := todo.push n.getPrefix
+      if lastString n == "_unsafe_rec" && !seen.contains n.getPrefix then todo := todo.push n.getPrefix
       -- A definition by mutual recursion is compiled through its block, so reaching one member
       -- reaches them all.
       if let .defnInfo d := ci then
@@ -88,19 +93,37 @@ def allowed : IO (List Name) := do
 /-- The axioms a proof in `Paw` may use. -/
 def standardAxioms : List Name := [``propext, ``Classical.choice, ``Quot.sound]
 
+/-- The axioms `n` depends on, remembering each constant's so that the graph is walked once. A
+constant met again while it is still being walked counts as depending on none: that happens only
+for the self-referencing bodies of `partial` definitions, which are not proofs. -/
+partial def axiomsOf (env : Environment) (n : Name) :
+    StateM (Std.HashMap Name (Array Name)) (Array Name) := do
+  if let some a := (← get)[n]? then return a
+  modify (·.insert n #[])
+  let a ← match env.find? n with
+    | some (.axiomInfo _) => pure #[n]
+    | some ci => do
+      let mut acc : Array Name := #[]
+      for m in ci.getUsedConstantsAsSet do
+        for x in ← axiomsOf env m do
+          if !acc.contains x then acc := acc.push x
+      pure acc
+    | none => pure #[]
+  modify (·.insert n a)
+  return a
+
 /-- Declarations in `Paw` whose proofs use any other axiom, such as `sorryAx`, with it. -/
-def offAxioms (env : Environment) : IO (Array (Name × Name)) := do
+def offAxioms (env : Environment) : Array (Name × Name) :=
   -- Lean's own `deriving TypeName` uses the compiler's `lcProof`; it is not a proof of ours.
   let names := env.constants.fold (init := #[]) fun acc n ci =>
     if (moduleOf env n).any inLibrary && ci.type.getAppFn.constName? != some ``TypeName then
       acc.push n
     else acc
-  let ctx : Core.Context := { fileName := "<coverage>", fileMap := default }
-  let (bad, _) ← (names.foldlM (init := #[]) fun acc n => do
-      let axs ← collectAxioms n
+  let go : StateM (Std.HashMap Name (Array Name)) (Array (Name × Name)) :=
+    names.foldlM (init := #[]) fun acc n => do
+      let axs ← axiomsOf env n
       return acc ++ (axs.filter (!standardAxioms.contains ·)).map (n, ·)
-    : CoreM _).toIO ctx { env }
-  return bad
+  (go.run {}).1
 
 end Paw.Tests.Coverage
 
@@ -115,7 +138,7 @@ def main : IO UInt32 := do
   let total := (candidates env).size
   IO.println s!"coverage: {total - missed.size} of {total} definitions reached by tests"
   for n in missed do IO.println s!"  not reached: {n}"
-  let bad ← offAxioms env
+  let bad := offAxioms env
   IO.println s!"axioms: {bad.size} declarations use an axiom beyond {standardAxioms}"
   for (n, a) in bad do IO.println s!"  {n} uses {a}"
   return if missed.isEmpty && bad.isEmpty then 0 else 1

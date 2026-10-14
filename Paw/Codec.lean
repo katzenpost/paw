@@ -85,7 +85,7 @@ theorem putNat_spec (n : Nat) (b : ByteArray) :
   | ind n ih =>
     rw [putNat, encNat]
     split
-    · simp [ByteArray.toList_push]
+    · simp
     · rw [ih (n / 128) (by omega), ByteArray.toList_push]; simp
 
 def nat : Codec Nat :=

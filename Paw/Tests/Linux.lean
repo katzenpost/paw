@@ -4,6 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Paw.Linux
+import Paw.Ui
 import Paw.Tests.Util
 
 /-! # The Linux platform's formats
@@ -85,6 +86,10 @@ def tests : TestM Unit := do
   check "a scene draws to PNG" (isPng (renderPng scene 20 10))
   check "at twice the scale" (isPng (renderPng scene 40 20 (scale := 2000)))
   checkEq "a malformed scene draws nothing" 0 (Ffi.renderPng ⟨#[1, 9]⟩ 10 10 1000).size
+  -- The layout report the end-to-end tests read.
+  let tree := ((Ui.col [Ui.label "a" "first", Ui.label "b", Ui.label "c" "third"] (spacing := 0) : Node Unit).init 1).1.resize
+    { measure := fun _ _ => (px 10, px 20) } (Rect.ofXYWH 0 0 (px 100) (px 100))
+  checkEq "a layout report names keyed widgets" "first 0 0 100 20\nthird 0 40 100 60" (layoutReport tree)
   -- Comparing images.
   let a := renderPng scene 20 10
   let b := renderPng (Scene.inBox (Rect.ofXYWH 0 0 (px 5) (px 5)) [.fill (Rect.ofXYWH 0 0 (px 5) (px 5)) Color.black 0]) 20 10

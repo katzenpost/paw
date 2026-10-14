@@ -51,7 +51,8 @@ CryptWalker already relies on this. `NIKE` carries `commutes` and `derive_safe`,
 
 Some platform facts the guidelines rely on, as they stand on Linux:
 
-- **Synthetic input.** winit reads the pointer and keyboard through XInput2 on X11. Core events another client sends with `XSendEvent` are not XInput2 events, so they never reach Paw at all. winit gives no flag for synthetic input on either X11 or Wayland, so `Input.synthetic` is never set on Linux. XTEST input remains indistinguishable from the user's, as the guidelines say.
+- **Synthetic input on X11.** winit reads the pointer through XInput2. A click another client sends with `XSendEvent` is a core event, not an XInput2 one, so it never reaches Paw; the end-to-end test checks this. Keys are different: winit reads them from core events and does not pass on the flag that marks one sent by another client, so keys sent with `XSendEvent` arrive as if typed, and so does any input sent through XTEST. `Input.synthetic` is never set on Linux. This is the guidelines' point that X11 has no trusted path between programs: any client on the display can type into any window. The end-to-end test reports it rather than hiding it.
+- **Synthetic input on Wayland.** A client cannot send input to another client's window. Input that a compositor's virtual-keyboard or virtual-pointer protocol injects, as the end-to-end tests do, arrives as the compositor's own, which only programs the compositor trusts can use.
 - **Keys held when focus arrives.** winit reports keys held while the window gains focus as synthetic key events. The Rust layer drops them, because they were not pressed in this window.
 - **A lost display.** When the compositor or X server goes away, winit's loop exits, and the Rust layer reports `close`.
 

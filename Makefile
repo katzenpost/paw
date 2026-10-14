@@ -4,7 +4,7 @@
 # Rust comes from rustup and Lean from elan.
 export PATH := $(HOME)/.cargo/bin:$(HOME)/.elan/bin:$(PATH)
 
-.PHONY: all build test test-lean test-rust coverage check goldens goldens-update
+.PHONY: all build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland
 
 all: test coverage goldens
 
@@ -35,3 +35,13 @@ goldens:
 goldens-update:
 	lake build paw-goldens
 	.lake/build/bin/paw-goldens --update
+
+e2e: e2e-x11 e2e-wayland
+
+e2e-x11:
+	lake build paw-gallery
+	sh tests/e2e/x11.sh
+
+e2e-wayland:
+	lake build paw-gallery
+	sh tests/e2e/wayland.sh

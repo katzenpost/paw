@@ -136,7 +136,7 @@ def tests : TestM Unit := do
   let (_, ds) := run [key .enter 1900 (synthetic := true)] rt
   check "a synthetic key designates nothing" (ds.all (·.designation.isNone))
   let (_, ds) := run [key .enter 1000]
-  checkEq "a key with nothing focused goes nowhere" [] (targets ds)
+  checkEq "a key with nothing focused goes to the root" [(1, "key")] (targets ds)
   let (_, ds) := run [{ kind := .text "hé", time := 1900 }, { kind := .paste "x", time := 1901 }] rt
   checkEq "text and paste go to the focused widget" [(2, "text"), (2, "paste")] (targets ds)
   check "and designate nothing" (ds.all (·.designation.isNone))

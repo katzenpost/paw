@@ -187,9 +187,12 @@ def route (rt : Router) (tree : Node Msg) (i : Input) : Router × List Delivery 
     let to := nextFocus tree.focusables rt.focused m.shift
     rt.moveFocus to i.time
   | .key k m pressed =>
-    (rt, rt.focused.toList.map fun id =>
+    -- With nothing focused, keys go to the root, so that bindings around the whole view work.
+    let id := rt.focused.getD tree.id
+    let d : Delivery :=
       { target := id, event := .key k m pressed,
-        designation := rt.designate serial i id ((tree.find? id).bind (·.key)) true })
+        designation := rt.designate serial i id ((tree.find? id).bind (·.key)) true }
+    (rt, [d])
   | .text s => (rt, rt.focused.toList.map fun id => { target := id, event := .text s })
   | .paste s => (rt, rt.focused.toList.map fun id => { target := id, event := .paste s })
 

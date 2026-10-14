@@ -147,18 +147,32 @@ def platform : Platform where
       | some bytes => Ffi.windowRequest (toBytes bytes)
       | none => pure ()
 
+/-- Where each keyed widget is, one per line: its key, then its box's left, top, right and bottom
+in logical pixels. -/
+def layoutReport {Msg : Type} (tree : Node Msg) : String :=
+  String.intercalate "\n" <| tree.keyedPlacements.map fun (k, r) =>
+    s!"{k} {r.x0 / unitsPerPx} {r.y0 / unitsPerPx} {r.x1 / unitsPerPx} {r.y1 / unitsPerPx}"
+
 /-- Opens a window of `w` × `h` logical pixels and runs `app` in it until it quits or the window
-closes. If `PAW_TEST_LOG` names a file, each step's `describe` of the model is appended to it, for
-tests that drive the window from outside. -/
+closes. Two hooks are for tests that drive the window from outside: if `PAW_TEST_LOG` names a
+file, `describe` of the model is appended to it after each step; if `PAW_TEST_LAYOUT` names one,
+it always holds `layoutReport` of the tree on screen. -/
 def run {caps : List Cap} (app : App caps) (title : String := "Paw") (w h : Nat := 800)
     (describe : app.Model → String := fun _ => "") : IO Unit := do
   Ffi.windowOpen title w.toUInt32 h.toUInt32
   let log ← IO.getEnv "PAW_TEST_LOG"
-  let onStep : app.Model → IO Unit := fun m => match log with
-    | some path => do
+  let layout ← IO.getEnv "PAW_TEST_LAYOUT"
+  let last ← IO.mkRef ""
+  let onStep : Runtime app → IO Unit := fun rt => do
+    if let some path := log then
       let h ← IO.FS.Handle.mk path .append
-      h.putStrLn (describe m)
-    | none => pure ()
+      h.putStrLn (describe rt.model)
+    if let some path := layout then
+      let report := layoutReport rt.tree
+      if report != (← last.get) then
+        IO.FS.writeFile (path ++ ".tmp") report
+        IO.FS.rename (path ++ ".tmp") path
+        last.set report
   Runtime.run app platform onStep
 
 end Paw.Linux

@@ -188,16 +188,16 @@ def carryOut (p : Platform) (outs : List (Output app.Msg)) :
     | .task io => tasks := tasks.push (← IO.asTask io)
   return tasks
 
-/-- Runs `app` on `p` until it quits or the window closes, calling `onStep` with the model after
+/-- Runs `app` on `p` until it quits or the window closes, calling `onStep` with the runtime after
 each poll. -/
-partial def run (app : App caps) (p : Platform) (onStep : app.Model → IO Unit := fun _ => pure ()) :
+partial def run (app : App caps) (p : Platform) (onStep : Runtime app → IO Unit := fun _ => pure ()) :
     IO Unit := do
   let (w, h) ← p.size
   let (rt, outs) := start app (Rect.ofXYWH 0 0 w h) (← p.now) p.measure
   loop rt (← carryOut p outs)
 where
   loop (rt : Runtime app) (tasks : Array (Task (Except IO.Error app.Msg))) : IO Unit := do
-    onStep rt.model
+    onStep rt
     if rt.quit then return
     let mut rt := rt
     let mut tasks := tasks

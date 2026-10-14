@@ -432,6 +432,17 @@ def focusablesList : List (Node Msg) → List WidgetId
 end
 
 mutual
+/-- Every visible node with a key, and its box. -/
+def keyedPlacements : Node Msg → List (String × Rect)
+  | mk _ _ i _ cs =>
+    if i.visible then (i.key.toList.map (·, i.viewport)) ++ keyedPlacementsList cs else []
+
+def keyedPlacementsList : List (Node Msg) → List (String × Rect)
+  | [] => []
+  | c :: cs => keyedPlacements c ++ keyedPlacementsList cs
+end
+
+mutual
 /-- Every visible node's id and box. -/
 def placements : Node Msg → List (WidgetId × Rect)
   | mk _ _ i _ cs => if i.visible then (i.id, i.viewport) :: placementsList cs else []

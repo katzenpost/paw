@@ -230,8 +230,8 @@ def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool 
       let s := env.look (kind.style env.theme)
       let style := { textStyle env with color := s.fg }
       let (w, _) := env.measure style caption
-      -- A flat button at rest is only its caption, on whatever it is drawn on.
-      let rest := kind == .flat && !env.isHovered && !env.isPressed && !env.isFocused && env.enabled
+      -- A flat button at rest, or disabled, is only its caption, on whatever it is drawn on.
+      let rest := kind == .flat && !env.isHovered && !env.isPressed && !env.isFocused
       Scene.inBox v ((if rest then [] else frame v s) ++ [centeredText env v (v.x0 + (v.width - w) / 2) caption style])
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun _ st _ e => match e with
@@ -312,7 +312,7 @@ def badge {Msg : Type} (n : Nat) (what : String := "unread") : Widget Msg :=
     init := {}
     sizeReq := fun env _ =>
       let (w, h) := env.measure (style env) t
-      let height := h + px 4
+      let height := h + px 2
       (fixedSize (max height (w + px 12)).toNat, fixedSize height.toNat)
     render := fun env _ v =>
       let (w, _) := env.measure (style env) t

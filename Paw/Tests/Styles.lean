@@ -71,6 +71,11 @@ def tests : TestM Unit := do
   -- Buttons.
   check "a main button is filled with the accent" ((fills (drawn rt "mainButton")).contains t.mainButton.basic.bg)
   check "a flat button at rest draws no frame" ((fills (drawn rt "flatButton")).isEmpty && strokes (drawn rt "flatButton") == 0)
+  let off := (Ui.pad (px 8) (Ui.enabled false (Ui.flatButton "Off" ())) : Node Unit)
+  let offTree := (off.init 1).1.resize Env.mock (Rect.ofXYWH 0 0 (px 200) (px 60))
+  check "disabled, it draws none either" ((offTree.render Env.mock).items.all fun
+    | (_, .stroke ..) | (_, .fill ..) => false
+    | _ => true)
   let hov := step rt (.move (mid (box rt "flatButton"))) 1000
   check "hovered, it does" (strokes (drawn hov "flatButton") == 1)
   check "a destructive button's caption is in its color" ((texts (drawn rt "destructiveButton")).all fun (_, st) =>

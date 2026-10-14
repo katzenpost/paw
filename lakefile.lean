@@ -10,6 +10,10 @@ lean_lib Paw
 lean_lib Gallery where
   srcDir := "examples"
 
+lean_exe «paw-gallery» where
+  root := `GalleryMain
+  srcDir := "examples"
+
 lean_exe «paw-test» where
   root := `Paw.Tests.Main
 

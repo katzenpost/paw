@@ -38,20 +38,22 @@ CryptWalker already relies on this. `NIKE` carries `commutes` and `derive_safe`,
 
 **Lean** holds everything that decides what the user sees and what the app may do. This covers the app's model and update, the widget tree and its merge, layout, hit-testing, focus, and the display list. All of it is pure except the runtime loop, so the laws below are theorems about the code that actually runs.
 
-**Rust** holds what talks to the platform:
+**Rust** holds what talks to the platform. On Linux desktop, X11 and Wayland both:
 
-| Concern | Candidates |
-| --- | --- |
-| Windows, input, IME, Android lifecycle | winit with android-activity |
-| Text shaping and measuring | parley or cosmic-text |
-| Drawing a Scene | vello on the GPU, tiny-skia on the CPU |
-| Accessibility | AccessKit |
-| File chooser, opening links, screen capture | xdg-desktop-portal (ashpd); Storage Access Framework and intents through JNI |
+| Concern | Crate | Why |
+| --- | --- | --- |
+| Windows and input | winit 0.30, driven with `pump_app_events` | Lean owns the loop and polls, as monomer polls SDL; no Lean code runs inside a winit callback. winit picks Wayland or X11 at startup |
+| Drawing a Scene | tiny-skia, shown with softbuffer | Draws on the CPU, so the same scene gives the same pixels everywhere: golden images can be compared exactly, and no GPU is needed under Xvfb or a headless compositor |
+| Text shaping, measuring, drawing | cosmic-text, with DejaVu Sans bundled | Measuring and drawing use one font system, so text is drawn as wide as layout measured it. Offscreen renders use only the bundled fonts; a window adds the system's for characters they lack |
+| Clipboard | arboard, with Wayland's data-control protocol | The clipboard is read only when the user presses Ctrl-V, which becomes a `paste` event |
+| Opening links, notifications | `xdg-open` and `notify-send`, run with the link or text as arguments, never through a shell | Lean has already checked the link |
+| Accessibility | AccessKit | |
 
-The FFI boundary passes plain data, with no callbacks into widget code:
+Some platform facts the guidelines rely on, as they stand on Linux:
 
-- Rust sends input events with platform flags (synthetic, obscured), window changes and measurement results.
-- Lean sends a Scene to draw and requests such as setting a title, writing the clipboard or opening a picker.
+- **Synthetic input.** winit reads the pointer and keyboard through XInput2 on X11. Core events another client sends with `XSendEvent` are not XInput2 events, so they never reach Paw at all. winit gives no flag for synthetic input on either X11 or Wayland, so `Input.synthetic` is never set on Linux. XTEST input remains indistinguishable from the user's, as the guidelines say.
+- **Keys held when focus arrives.** winit reports keys held while the window gains focus as synthetic key events. The Rust layer drops them, because they were not pressed in this window.
+- **A lost display.** When the compositor or X server goes away, winit's loop exits, and the Rust layer reports `close`.
 
 The byte formats are built from `Codec α`, a structure that carries its own law, the same pattern as the widget laws below:
 

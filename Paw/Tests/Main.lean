@@ -16,6 +16,7 @@ import Paw.Tests.Cmd
 import Paw.Tests.Runtime
 import Paw.Tests.Widgets
 import Paw.Tests.Gallery
+import Paw.Tests.Linux
 
 open Paw.Tests
 
@@ -33,5 +34,6 @@ def main : IO UInt32 := do
     ("cmd", Cmd.tests),
     ("runtime", Runtime.tests),
     ("widgets", Widgets.tests),
-    ("gallery", Gallery.tests)].mapM fun (n, t) => runSuite n t
+    ("gallery", Gallery.tests),
+    ("linux", Linux.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

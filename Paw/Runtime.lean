@@ -83,7 +83,9 @@ def layout (rt : Runtime app) : Runtime app :=
   let tree := rt.tree.resize rt.env rt.window
   { rt with tree, router := rt.router.observe tree rt.now }
 
-def present (rt : Runtime app) : Output app.Msg := .request (.present (rt.tree.render rt.env))
+/-- The window's background, then the tree. -/
+def present (rt : Runtime app) : Output app.Msg :=
+  .request (.present (Scene.inBox rt.window [.fill rt.window rt.theme.background 0] ++ rt.tree.render rt.env))
 
 /-- `update` on one message: the runtime with the new model, and the commands' outputs. -/
 def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List (Output app.Msg) :=
@@ -186,13 +188,16 @@ def carryOut (p : Platform) (outs : List (Output app.Msg)) :
     | .task io => tasks := tasks.push (← IO.asTask io)
   return tasks
 
-/-- Runs `app` on `p` until it quits or the window closes. -/
-partial def run (app : App caps) (p : Platform) : IO Unit := do
+/-- Runs `app` on `p` until it quits or the window closes, calling `onStep` with the model after
+each poll. -/
+partial def run (app : App caps) (p : Platform) (onStep : app.Model → IO Unit := fun _ => pure ()) :
+    IO Unit := do
   let (w, h) ← p.size
   let (rt, outs) := start app (Rect.ofXYWH 0 0 w h) (← p.now) p.measure
   loop rt (← carryOut p outs)
 where
   loop (rt : Runtime app) (tasks : Array (Task (Except IO.Error app.Msg))) : IO Unit := do
+    onStep rt.model
     if rt.quit then return
     let mut rt := rt
     let mut tasks := tasks

@@ -1,0 +1,11 @@
+# Definitions that need a real window. Unit tests open none; the end-to-end tests
+# (make e2e-x11, make e2e-wayland) run the gallery through them.
+Paw.Ffi.now
+Paw.Ffi.windowOpen
+Paw.Ffi.windowPoll
+Paw.Ffi.windowPresent
+Paw.Ffi.windowRequest
+Paw.Ffi.windowScreenshot
+Paw.Ffi.windowSize
+Paw.Linux.platform
+Paw.Linux.run

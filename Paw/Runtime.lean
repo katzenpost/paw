@@ -69,6 +69,8 @@ structure Runtime {caps : List Cap} (app : App caps) where
   measure : TextStyle → SafeText → Int × Int
   theme : Theme := {}
   quit : Bool := false
+  /-- `update` has run since the last settle, so the model may have changed. -/
+  updated : Bool := false
 
 namespace Runtime
 
@@ -91,7 +93,8 @@ def present (rt : Runtime app) : Output app.Msg :=
 def applyMsg (rt : Runtime app) (o : Origin) (m : app.Msg) : Runtime app × List (Output app.Msg) :=
   let ((), (model, cmds)) := (app.update o m).run (rt.model, #[])
   let outs := cmds.toList.map Cmd.toOutput
-  ({ rt with model, quit := rt.quit || outs.any fun | .request .quit => true | _ => false }, outs)
+  let quit := rt.quit || outs.any fun | .request .quit => true | _ => false
+  ({ rt with model, updated := true, quit }, outs)
 
 /-- What a widget's request comes to, while handling a delivery with origin `o`. -/
 def applyReq (rt : Runtime app) (o : Origin) : Req app.Msg → Runtime app × List (Output app.Msg)
@@ -128,7 +131,9 @@ def rebuild (rt : Runtime app) : Runtime app × List (Output app.Msg) :=
 /-- After handling something: rebuild if the model changed, and draw if anything did. -/
 def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List (Output app.Msg)) :
     Runtime app × List (Output app.Msg) :=
-  if rt.model == before then
+  let wasUpdated := rt.updated
+  let rt := { rt with updated := false }
+  if !wasUpdated || rt.model == before then
     if changed then (rt.layout, outs ++ [rt.layout.present]) else (rt, outs)
   else
     let (rt, outs') := rt.rebuild

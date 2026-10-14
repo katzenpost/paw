@@ -47,6 +47,8 @@ structure NodeInfo where
   memo : Option Dynamic := none
   /-- Kept as it was by `resolve`, so that merge keeps it whole. -/
   reused : Bool := false
+  /-- `req` holds for the node as it is: no state below it has changed since `measure`. -/
+  measured : Bool := false
   deriving Repr, Inhabited
 
 inductive Node (Msg : Type) where
@@ -327,10 +329,13 @@ def keptItems (cs : List (Node Msg)) : List Item :=
 mutual
 /-- The node with every node's size request worked out and kept, bottom up, once each. -/
 def measure (env : Env) : Node Msg → Node Msg
-  | mk w st i none cs => mk w st { i with req := w.sizeReq (envAt env i) st } none cs
-  | mk w st i (some l) cs =>
-    let cs := measureList env cs
-    mk w st { i with req := l.sizeReq (keptItems cs) } (some l) cs
+  | n@(mk w st i none cs) =>
+    if i.measured then n else mk w st { i with req := w.sizeReq (envAt env i) st, measured := true } none cs
+  | n@(mk w st i (some l) cs) =>
+    if i.measured then n
+    else
+      let cs := measureList env cs
+      mk w st { i with req := l.sizeReq (keptItems cs), measured := true } (some l) cs
   | n@(deferred ..) => n
 
 def measureList (env : Env) : List (Node Msg) → List (Node Msg)
@@ -361,13 +366,16 @@ mutual
 /-- What the node and its descendants draw, within its box. -/
 def render (env : Env) : Node Msg → Scene
   | mk w st i _ cs =>
-    if i.visible then w.render (envAt env i) st i.viewport ++ (renderList env cs).clip i.viewport
+    if i.visible then w.render (envAt env i) st i.viewport ++ (renderList env i.viewport cs).clip i.viewport
     else Scene.empty
   | deferred .. => Scene.empty
 
-def renderList (env : Env) : List (Node Msg) → Scene
+/-- The children's scenes, leaving out those wholly outside `box`, which the clip would remove. -/
+def renderList (env : Env) (box : Rect) : List (Node Msg) → Scene
   | [] => Scene.empty
-  | c :: cs => render env c ++ renderList env cs
+  | c :: cs =>
+    if (c.viewport.inter box).isEmpty then renderList env box cs
+    else render env c ++ renderList env box cs
 end
 
 theorem render_within (env : Env) (n : Node Msg) : (n.render env).Within n.viewport := by
@@ -420,11 +428,11 @@ def handleAt (env : Env) (id : WidgetId) (e : Event) : Node Msg → Node Msg × 
   | mk w st i l cs =>
     if i.id == id then
       match w.handle (envAt env i) st i.viewport e with
-      | some (st', reqs) => (mk w st' i l cs, some reqs)
+      | some (st', reqs) => (mk w st' { i with measured := false } l cs, some reqs)
       | none => (mk w st i l cs, none)
     else
       let (cs', reqs) := handleList env id e cs
-      (mk w st i l cs', reqs)
+      (mk w st { i with measured := reqs.isNone && i.measured } l cs', reqs)
   | n@(deferred ..) => (n, none)
 
 def handleList (env : Env) (id : WidgetId) (e : Event) :
@@ -442,14 +450,15 @@ the tree untouched, if none did. One walk down the path. -/
 def bubbleAt (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Msg × List (Req Msg))
   | path, mk w st i l cs =>
     let own (cs : List (Node Msg)) : Option (Node Msg × List (Req Msg)) :=
-      (w.handle (envAt env i) st i.viewport e).map fun (st', reqs) => (mk w st' i l cs, reqs)
+      (w.handle (envAt env i) st i.viewport e).map fun (st', reqs) =>
+        (mk w st' { i with measured := false } l cs, reqs)
     match path with
     | [] => own cs
     | k :: rest =>
       match cs[k]? with
       | some c =>
         match bubbleAt env e rest c with
-        | some (c', reqs) => some (mk w st i l (cs.set k c'), reqs)
+        | some (c', reqs) => some (mk w st { i with measured := false } l (cs.set k c'), reqs)
         | none => own cs
       | none => none
   | _, deferred .. => none
@@ -557,20 +566,23 @@ end
 
 mutual
 /-- Every visible node's id, box and path from the root, added to `acc` in preorder. -/
-def indexInto (path : Array Nat) (acc : Array (WidgetId × Rect × List Nat)) :
+def indexInto (clip : Rect) (path : Array Nat) (acc : Array (WidgetId × Rect × List Nat)) :
     Node Msg → Array (WidgetId × Rect × List Nat)
   | mk _ _ i _ cs =>
-    if i.visible then indexList path 0 (acc.push (i.id, i.viewport, path.toList)) cs else acc
+    let seen := i.viewport.inter clip
+    if i.visible && !seen.isEmpty then indexList seen path 0 (acc.push (i.id, i.viewport, path.toList)) cs
+    else acc
   | deferred .. => acc
 
-def indexList (path : Array Nat) (idx : Nat) (acc : Array (WidgetId × Rect × List Nat)) :
+def indexList (clip : Rect) (path : Array Nat) (idx : Nat) (acc : Array (WidgetId × Rect × List Nat)) :
     List (Node Msg) → Array (WidgetId × Rect × List Nat)
   | [] => acc
-  | c :: cs => indexList path (idx + 1) (indexInto (path.push idx) acc c) cs
+  | c :: cs => indexList clip path (idx + 1) (indexInto clip (path.push idx) acc c) cs
 end
 
-/-- Every visible node's id, box and path from the root, in preorder. -/
-def index (n : Node Msg) : Array (WidgetId × Rect × List Nat) := indexInto #[] #[] n
+/-- Every node that can be seen, its id, box and path from the root, in preorder: visible, and
+not wholly clipped away by the boxes around it, such as a scroll's. -/
+def index (n : Node Msg) : Array (WidgetId × Rect × List Nat) := indexInto n.viewport #[] #[] n
 
 mutual
 /-- Every visible node's id and box. -/

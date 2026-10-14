@@ -9,8 +9,9 @@ Text the program did not write itself, such as a message, a file name or a name 
 carry characters that hide, reorder or break up what is shown. Widgets draw only `SafeText` and
 `SafeName`, whose `ok` fields prove that every character passed the allowlist. Filtering keeps a
 character only when it is allowed, and replaces any other with a visible stand-in, so that an
-attempt shows: a control character becomes its Control Picture (`␛` for ESC, `␊` for a newline),
-DEL becomes `␡`, and every other character refused becomes `␦`.
+attempt shows: U+FFFD, `�`, the character Unicode sets aside for one that cannot be shown. A
+terminal would show a control character as its Control Picture (`␛`), but fonts seldom have
+those, and a stand-in drawn as an empty box tells the user nothing.
 
 Body text keeps bidi controls, which right-to-left writing needs; each field is laid out as its own
 paragraph, so its direction cannot leak into the text around it. Names are stricter: no bidi
@@ -62,27 +63,14 @@ def combining (n : Nat) : Bool :=
     (0x6D6, 0x6DC), (0x6DF, 0x6E4), (0x6E7, 0x6E8), (0x6EA, 0x6ED), (0x1AB0, 0x1AFF),
     (0x1DC0, 0x1DFF), (0x20D0, 0x20FF), (0xFE20, 0xFE2F)]
 
-/-- The stand-in for a character refused that is not C0 or DEL. -/
-def substitute : Char := '␦'
-
-/-- The Control Pictures for C0, U+2400 to U+241F. -/
-def controlPictures : List Char := (List.range 32).map fun n => Char.ofNat (0x2400 + n)
-
-theorem controlPictures_length : controlPictures.length = 32 := by simp [controlPictures]
-
-theorem controlPictures_allowed : ∀ c ∈ controlPictures, allowedInName c = true := by decide
+/-- The stand-in for a character refused: U+FFFD. -/
+def substitute : Char := '\uFFFD'
 
 /-- What a character refused shows as. -/
-def standIn (c : Char) : Char :=
-  if h : c.toNat < 32 then controlPictures[c.toNat]'(by rw [controlPictures_length]; exact h)
-  else if c.toNat == 0x7F then '␡'
-  else substitute
+def standIn (_ : Char) : Char := substitute
 
 theorem standIn_allowedInName (c : Char) : allowedInName (standIn c) = true := by
-  unfold standIn
-  split
-  · exact controlPictures_allowed _ (List.getElem_mem _)
-  · split <;> decide
+  unfold standIn; decide
 
 theorem allowed_of_allowedInName {c : Char} (h : allowedInName c = true) : allowed c = true := by
   simp only [allowedInName, Bool.and_eq_true] at h

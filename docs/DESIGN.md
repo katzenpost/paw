@@ -154,6 +154,7 @@ Widgets that draw text accept only `SafeText`. The allowlist follows the guideli
 
 - **Names are stricter.** `SafeName` is for names, titles and file names. Its `ok` uses `allowedInName`, which also refuses bidi controls, joiners, variation selectors and badge-like symbols. Body text keeps bidi controls, which right-to-left writing needs; each field is laid out as its own paragraph, so its direction cannot leak.
 - **Not every rule is about single characters.** The cap on combining marks per base character is applied by the filter but is not part of `ok`, because it constrains runs of characters. Marks beyond the cap cannot escape anyway: the clipping law below keeps whatever a text draws inside its widget.
+- **What is refused shows as U+FFFD** (�), which fonts have. A terminal shows a refused control character as its Control Picture (␛), but few fonts have those, and an empty box tells the user nothing.
 - **Text the app wrote** goes through `SafeText.trusted`. It checks the string and filters it, should it hold a character not allowed, so even the app's own strings carry the proof.
 
 ### Scenes and clipping

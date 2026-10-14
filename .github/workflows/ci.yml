@@ -33,4 +33,10 @@ jobs:
           key: build-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'rust/Cargo.lock') }}
       - run: make test
       - run: make coverage
+      - run: make goldens
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goldens-actual
+          path: tests/goldens/actual/
       - run: rustup component add clippy && make check

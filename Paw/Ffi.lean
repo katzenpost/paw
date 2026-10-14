@@ -33,6 +33,14 @@ def abiMatches : Bool := rustAbiVersion () == abiVersion
 /-- A scene drawn offscreen at `scaleMilli`/1000 pixels per logical pixel, as PNG. -/
 @[extern "paw_render_png"] opaque renderPng : @& ByteArray → UInt32 → UInt32 → UInt32 → ByteArray
 
+/-- The pixels that differ between two PNGs, as a varint, then a PNG showing them; empty if they
+cannot be compared. -/
+@[extern "paw_png_diff"] opaque pngDiff : @& ByteArray → @& ByteArray → ByteArray
+
+/-- The pixels outside `(x0, y0)`–`(x1, y1)` that differ between two PNGs. -/
+@[extern "paw_png_diff_outside"]
+opaque pngDiffOutside : @& ByteArray → @& ByteArray → UInt32 → UInt32 → UInt32 → UInt32 → UInt64
+
 @[extern "paw_window_open"] opaque windowOpen : @& String → UInt32 → UInt32 → IO Unit
 @[extern "paw_window_poll"] opaque windowPoll : UInt32 → IO ByteArray
 @[extern "paw_window_present"] opaque windowPresent : @& ByteArray → IO Unit

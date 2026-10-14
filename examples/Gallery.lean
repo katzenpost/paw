@@ -80,7 +80,7 @@ def view (m : Model) : Node Msg :=
       Ui.button "Add" .add "add", Ui.button "Reverse" .reverse "reverse"],
     Ui.list m.items (·.1) fun (id, s) =>
       Ui.row [Ui.text (SafeText.filter s), Ui.spacer, Ui.button "Remove" (.remove id) s!"remove-{id}"],
-    Ui.scroll (Ui.paragraph (String.intercalate "\n" ((List.range 12).map fun i =>
+    Ui.height (px 120) <| Ui.scroll (Ui.paragraph (String.intercalate "\n" ((List.range 12).map fun i =>
       s!"Line {i + 1} of a text longer than its box."))) "scroll",
     Ui.row [Ui.button "Open link" .openLink "link", Ui.button "Copy name" .copyName "copy",
       Ui.label s!"links opened: {m.opened}" "opened"]]

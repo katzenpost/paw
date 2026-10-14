@@ -52,7 +52,7 @@ A GUI does not interpret escape sequences the way a terminal does, but text stil
 | Combining-mark floods | Long runs of Mn and Me | Cap combining marks per base character, e.g. 4 |
 | Badge-like glyphs | Lock, check mark and shield emoji; Private Use Area icons | Remove from names so a name cannot fake a verified or encrypted mark |
 | Line breaks in one-line fields | U+000A, U+000D, U+0085, U+2028, U+2029 | Show a visible stand-in; a one-line field never wraps |
-| Control characters | C0, DEL, C1 | Show a visible stand-in, such as the Control Picture (␛) |
+| Control characters | C0, DEL, C1 | Show a visible stand-in, such as U+FFFD (�); fonts seldom have the Control Pictures (␛) a terminal would use |
 
 Replace refused characters with a visible stand-in rather than removing them, so an attempt shows.
 

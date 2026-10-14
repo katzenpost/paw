@@ -135,6 +135,47 @@ pub fn render(scene: &Scene, width: u32, height: u32, scale: f32, text: &mut Tex
     pm
 }
 
+/// The pixels that differ between two PNGs, and an image of them: differing pixels red, the rest
+/// faded. `None` if either does not decode or their sizes differ.
+pub fn diff_png(a: &[u8], b: &[u8]) -> Option<(u64, Vec<u8>)> {
+    let (pa, pb) = (Pixmap::decode_png(a).ok()?, Pixmap::decode_png(b).ok()?);
+    if pa.width() != pb.width() || pa.height() != pb.height() {
+        return None;
+    }
+    let mut out = pa.clone();
+    let mut n = 0;
+    for (o, (x, y)) in out.pixels_mut().iter_mut().zip(pa.pixels().iter().zip(pb.pixels())) {
+        *o = if x != y {
+            n += 1;
+            PremultipliedColorU8::from_rgba(255, 0, 0, 255)?
+        } else {
+            let f = |c: u8| ((c as u32 + 3 * 255) / 4) as u8;
+            PremultipliedColorU8::from_rgba(f(x.red()), f(x.green()), f(x.blue()), 255)?
+        };
+    }
+    Some((n, out.encode_png().ok()?))
+}
+
+/// The pixels outside `(x0, y0)–(x1, y1)` that differ between two PNGs; `u64::MAX` if they do not
+/// decode or their sizes differ.
+pub fn diff_outside(a: &[u8], b: &[u8], x0: u32, y0: u32, x1: u32, y1: u32) -> u64 {
+    let (Ok(pa), Ok(pb)) = (Pixmap::decode_png(a), Pixmap::decode_png(b)) else { return u64::MAX };
+    if pa.width() != pb.width() || pa.height() != pb.height() {
+        return u64::MAX;
+    }
+    let w = pa.width();
+    pa.pixels()
+        .iter()
+        .zip(pb.pixels())
+        .enumerate()
+        .filter(|(i, (p, q))| {
+            let (x, y) = (*i as u32 % w, *i as u32 / w);
+            let inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+            !inside && p != q
+        })
+        .count() as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +249,22 @@ mod tests {
             }
         }
         assert!(inside > 10);
+    }
+
+    #[test]
+    fn diffs() {
+        let mut t = Text::bundled();
+        let a = Scene { items: vec![(r(0, 0, 4, 4), Draw::Fill { rect: r(0, 0, 4, 4), color: RED, radius: 0 })] };
+        let b = Scene { items: vec![(r(0, 0, 2, 2), Draw::Fill { rect: r(0, 0, 2, 2), color: RED, radius: 0 })] };
+        let (pa, pb) = (render(&a, 8, 8, 1.0, &mut t).encode_png().unwrap(), render(&b, 8, 8, 1.0, &mut t).encode_png().unwrap());
+        assert_eq!(diff_png(&pa, &pa).map(|d| d.0), Some(0));
+        assert_eq!(diff_png(&pa, &pb).map(|d| d.0), Some(12));
+        assert_eq!(diff_outside(&pa, &pb, 0, 0, 4, 4), 0);
+        assert_eq!(diff_outside(&pa, &pb, 0, 0, 3, 3), 7);
+        let small = render(&a, 4, 4, 1.0, &mut t).encode_png().unwrap();
+        assert_eq!(diff_png(&pa, &small), None);
+        assert_eq!(diff_outside(&pa, &small, 0, 0, 1, 1), u64::MAX);
+        assert_eq!(diff_outside(&pa, b"junk", 0, 0, 1, 1), u64::MAX);
     }
 
     #[test]

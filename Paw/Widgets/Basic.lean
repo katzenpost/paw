@@ -109,12 +109,13 @@ def checkbox {Msg : Type} (caption : SafeText) (value : Bool) (onChange : Bool â
       | _ => none
     focusable := true }
 
-/-- Empty space that takes what is left over. -/
+/-- Empty space that takes the width left over, and no height: for pushing things apart in a
+row. -/
 def spacer {Msg : Type} : Widget Msg :=
   Widget.Spec.build (Ïƒ := NoState) {
     kind := "spacer"
     init := {}
-    sizeReq := fun _ _ => (filler, filler)
+    sizeReq := fun _ _ => (filler, {})
     render := fun _ _ _ => Scene.empty
     render_within := fun _ _ v => Scene.empty_within v }
 

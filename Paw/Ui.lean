@@ -70,6 +70,14 @@ def scroll (child : Node Msg) (key : Option String := none) : Node Msg :=
 def keystroke (bindings : List (KeyCombo × Msg)) (child : Node Msg) : Node Msg :=
   Node.containerWith (keystrokeWidget bindings) (box { expand := true }) [child]
 
+/-- The child at `h` units high, whatever it asks for: how a scroll is given its height. -/
+def height (h : Int) (child : Node Msg) : Node Msg :=
+  Node.container (sizeLayout none (some h.toNat)) [child]
+
+/-- The child at `w` units wide, whatever it asks for. -/
+def width (w : Int) (child : Node Msg) : Node Msg :=
+  Node.container (sizeLayout (some w.toNat) none) [child]
+
 /-- The child with `p` units of space around it. -/
 def pad (p : Int) (child : Node Msg) : Node Msg := Node.container (padLayout p) [child]
 

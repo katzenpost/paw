@@ -17,6 +17,10 @@ lean_exe «paw-gallery» where
 lean_exe «paw-test» where
   root := `Paw.Tests.Main
 
+/-- Draws scenes offscreen and compares them with the approved images. -/
+lean_exe «paw-goldens» where
+  root := `Paw.Tests.Goldens
+
 /-- Lists public definitions that no test reaches. -/
 lean_exe «paw-coverage» where
   root := `Paw.Tests.Coverage

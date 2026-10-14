@@ -98,6 +98,34 @@ pub unsafe extern "C" fn paw_render_png(a: b_lean_obj_arg, w: u32, h: u32, scale
     byte_array(&png)
 }
 
+/// The pixels that differ between two PNGs, then an image of them; empty if they cannot be
+/// compared.
+#[no_mangle]
+pub unsafe extern "C" fn paw_png_diff(a: b_lean_obj_arg, b: b_lean_obj_arg) -> lean_obj_res {
+    match render::diff_png(bytes_of(a), bytes_of(b)) {
+        Some((n, png)) => {
+            let mut w = Writer::default();
+            w.nat(n);
+            w.bytes.extend_from_slice(&png);
+            byte_array(&w.bytes)
+        }
+        None => byte_array(&[]),
+    }
+}
+
+/// The pixels outside a rectangle that differ between two PNGs.
+#[no_mangle]
+pub unsafe extern "C" fn paw_png_diff_outside(
+    a: b_lean_obj_arg,
+    b: b_lean_obj_arg,
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+) -> u64 {
+    render::diff_outside(bytes_of(a), bytes_of(b), x0, y0, x1, y1)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn paw_window_open(title: b_lean_obj_arg, w: u32, h: u32) -> lean_obj_res {
     match window::open(&string_of(title), w, h) {

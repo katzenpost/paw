@@ -78,14 +78,14 @@ def tests : TestM Unit := do
   checkEq "bidi controls stay in body text" "a⁧b⁩" (SafeText.filter "a⁧b⁩").text
   checkEq "markup is just text" "<b>x</b>" (SafeText.filter "<b>x</b>").text
   -- What is refused shows.
-  checkEq "controls show as Control Pictures" "␛]0;x␇" (SafeText.filter "\x1b]0;x\x07").text
-  checkEq "a newline in one line shows" "a␊b" (SafeText.filter "a\nb").text
-  checkEq "DEL shows" "a␡b" (SafeText.filter "a\x7Fb").text
-  checkEq "C1 shows as the substitute" "␦31m" (SafeText.filter "\u009b31m").text
-  checkEq "a line separator shows" "one␦two" (SafeText.filter "one two").text
-  checkEq "marks are capped at four" ("e" ++ String.ofList (List.replicate 4 '́') ++ "␦")
+  checkEq "controls show as U+FFFD" "�]0;x�" (SafeText.filter "\x1b]0;x\x07").text
+  checkEq "a newline in one line shows" "a�b" (SafeText.filter "a\nb").text
+  checkEq "DEL shows" "a�b" (SafeText.filter "a\x7Fb").text
+  checkEq "C1 shows" "�31m" (SafeText.filter "\u009b31m").text
+  checkEq "a line separator shows" "one�two" (SafeText.filter "one two").text
+  checkEq "marks are capped at four" ("e" ++ String.ofList (List.replicate 4 '́') ++ "�")
     (SafeText.filter ("e" ++ String.ofList (List.replicate 9 '́'))).text
-  checkEq "a mark with no base shows" "␦a" (SafeText.filter "́a").text
+  checkEq "a mark with no base shows" "�a" (SafeText.filter "́a").text
   checkEq "SafeText.trusted keeps its text" "x" (SafeText.trusted "x").text
   check "SafeText.trusted refuses forbidden text" (SafeText.trusted? "a\x1bb").isNone
   check "SafeText.trusted? accepts plain text" (SafeText.trusted? "ok").isSome
@@ -104,9 +104,9 @@ def tests : TestM Unit := do
     ((SafeText.lines (String.intercalate "\n" (List.replicate 30 "x"))).getLast!.text)
   -- Names.
   checkEq "a plain name" "alice" (SafeName.filter "alice").text
-  checkEq "bidi in a name shows" "invoice␦fdp.exe" (SafeName.filter "invoice‮fdp.exe").text
-  checkEq "a badge in a name shows" "alice ␦" (SafeName.filter "alice 🔒").text
-  checkEq "a ZWJ in a name shows" "a␦b" (SafeName.filter "a‍b").text
+  checkEq "bidi in a name shows" "invoice�fdp.exe" (SafeName.filter "invoice‮fdp.exe").text
+  checkEq "a badge in a name shows" "alice �" (SafeName.filter "alice 🔒").text
+  checkEq "a ZWJ in a name shows" "a�b" (SafeName.filter "a‍b").text
   checkEq "a name as text" "bob" (SafeName.filter "bob").toText.text
   -- Look-alike names.
   check "look-alike names share a skeleton" (skeleton "Alice" == skeleton "аlicе")

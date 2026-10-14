@@ -114,4 +114,19 @@ def padLayout (p : Int) : Layout where
     let add (r : SizeReq) := { r with fixed := r.fixed + 2 * p.toNat }
     (add (mergeAll mergeMax (vis.map (·.w))), add (mergeAll mergeMax (vis.map (·.h))))
 
+/-- The child, at a fixed width or height where given, whatever it asks for. -/
+def sizeLayout (w h : Option Nat) : Layout where
+  name := "size"
+  assign := fun v items => items.map fun _ => v
+  assign_length := by simp
+  assign_within := by
+    intro v items r hr
+    simp only [List.mem_map] at hr
+    obtain ⟨_, -, rfl⟩ := hr
+    exact Rect.within_refl v
+  sizeReq := fun items =>
+    let vis := items.filter (·.visible)
+    ((w.map fixedSize).getD (mergeAll mergeMax (vis.map (·.w))),
+     (h.map fixedSize).getD (mergeAll mergeMax (vis.map (·.h))))
+
 end Paw.Widgets

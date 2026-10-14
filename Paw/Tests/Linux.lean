@@ -85,5 +85,13 @@ def tests : TestM Unit := do
   check "a scene draws to PNG" (isPng (renderPng scene 20 10))
   check "at twice the scale" (isPng (renderPng scene 40 20 (scale := 2000)))
   checkEq "a malformed scene draws nothing" 0 (Ffi.renderPng ⟨#[1, 9]⟩ 10 10 1000).size
+  -- Comparing images.
+  let a := renderPng scene 20 10
+  let b := renderPng (Scene.inBox (Rect.ofXYWH 0 0 (px 5) (px 5)) [.fill (Rect.ofXYWH 0 0 (px 5) (px 5)) Color.black 0]) 20 10
+  checkEq "an image does not differ from itself" (some 0) ((Codec.nat.dec (ofBytes (Ffi.pngDiff a a))).map (·.1))
+  check "two images differ" (((Codec.nat.dec (ofBytes (Ffi.pngDiff a b))).map (·.1)).any (· > 0))
+  checkEq "images of different sizes cannot be compared" 0 (Ffi.pngDiff a (renderPng scene 10 10)).size
+  checkEq "no difference outside the whole image" 0 (Ffi.pngDiffOutside a b 0 0 20 10)
+  check "a difference outside a small corner" (Ffi.pngDiffOutside a b 0 0 1 1 > 0)
 
 end Paw.Tests.Linux

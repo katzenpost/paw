@@ -97,6 +97,7 @@ def view (m : Model) : Node Msg :=
         ((List.range 5).map fun i => Ui.label s!"line {i}"))] |>.withInfo ({ · with key := some "sc" }),
       Ui.list m.items id (fun s => Ui.textField s .typed),
       Ui.pad (px 2) (Ui.label "padded"),
+      (Ui.width (px 50) (Ui.label "narrow")).withInfo ({ · with key := some "narrow" }),
       Ui.row [Ui.text (SafeText.filter "a\x1bb"), Ui.paragraph "x\ny", Ui.spacer]]
 
 def app : App [] := { Model := Model, Msg := Msg, init := {}, update, view }
@@ -142,8 +143,10 @@ def appTests : TestM Unit := do
   let rt := begin
   check "everything is drawn within the window" (decide ((scene rt).Within rt.window))
   check "labels show" ((texts rt).contains "line 0")
-  check "text from elsewhere is shown filtered" ((texts rt).contains "a␛b")
+  check "text from elsewhere is shown filtered" ((texts rt).contains "a�b")
   check "a paragraph shows its lines" ((texts rt).contains "x" && (texts rt).contains "y")
+  checkEq "a fixed width" (some (px 50))
+    ((rt.tree.findKey? "narrow").map fun n => (n.sizeReq rt.env).1.fixed)
   -- Button.
   let (rt, _) := click rt "go" 1000
   checkEq "a click on the button" 1 rt.model.clicks

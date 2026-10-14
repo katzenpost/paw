@@ -67,6 +67,11 @@ def reached (env : Environment) : NameSet := Id.run do
     if let some ci := env.find? n then
       for m in ci.getUsedConstantsAsSet do
         if !seen.contains m then todo := todo.push m
+      -- A `partial` definition's body is in its `_unsafe_rec` twin, and reaching the twin
+      -- reaches the definition.
+      let twin := n.str "_unsafe_rec"
+      if env.contains twin && !seen.contains twin then todo := todo.push twin
+      if n.getString! == "_unsafe_rec" && !seen.contains n.getPrefix then todo := todo.push n.getPrefix
       -- A definition by mutual recursion is compiled through its block, so reaching one member
       -- reaches them all.
       if let .defnInfo d := ci then

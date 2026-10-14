@@ -19,9 +19,19 @@ Keys are unique among siblings: the only ways to build a node drop a key a sibli
 has, so text from elsewhere used as a key cannot take over another widget's state.
 
 `render` clips each node's children to the node's box, so a whole tree draws within its root's
-box whatever its widgets or layouts do. -/
+box whatever its widgets or layouts do.
+
+A view may defer part of itself with `Ui.lazy`: a deferred node holds an argument and a way to
+build its subtree from it. Before a merge, `resolve` matches deferred nodes against the tree on
+screen: if the old node was built from an equal argument, it is kept as it is, unbuilt and
+unmerged; otherwise the subtree is built then. Arguments are compared with `BEq`, not a hash,
+since content from elsewhere could be crafted to collide a hash and leave a stale subtree on
+screen. Deferred nodes exist only in a view before it is resolved; every function on a resolved
+tree treats one, should it meet one, as an empty leaf. -/
 
 namespace Paw
+
+instance : Repr Dynamic := ⟨fun _ _ => "<dynamic>"⟩
 
 structure NodeInfo where
   id : WidgetId := ⟨0⟩
@@ -33,11 +43,18 @@ structure NodeInfo where
   content : Rect := default
   /-- What the node asks for, as `measure` last found it. -/
   req : SizeReq × SizeReq := ({}, {})
+  /-- For a node built by `Ui.lazy`, the argument it was built from. -/
+  memo : Option Dynamic := none
+  /-- Kept as it was by `resolve`, so that merge keeps it whole. -/
+  reused : Bool := false
   deriving Repr, Inhabited
 
 inductive Node (Msg : Type) where
   | private mk (w : Widget Msg) (st : Dynamic) (info : NodeInfo) (layout : Option Layout)
       (children : List (Node Msg))
+  /-- A subtree to build from `arg` with `build`, unless the tree on screen has one built from an
+  argument `same` holds equal. -/
+  | private deferred (info : NodeInfo) (arg : Dynamic) (same : Dynamic → Bool) (build : Unit → Node Msg)
 
 /-- A node's kind, key and visibility, and its children's, without state. -/
 inductive Shape where
@@ -48,9 +65,9 @@ namespace Node
 
 variable {Msg : Type}
 
-def widget : Node Msg → Widget Msg | mk w .. => w
-def info : Node Msg → NodeInfo | mk _ _ i _ _ => i
-def children : Node Msg → List (Node Msg) | mk _ _ _ _ cs => cs
+def widget : Node Msg → Widget Msg | mk w .. => w | deferred .. => Widget.container "deferred"
+def info : Node Msg → NodeInfo | mk _ _ i _ _ => i | deferred i .. => i
+def children : Node Msg → List (Node Msg) | mk _ _ _ _ cs => cs | deferred .. => []
 def id (n : Node Msg) : WidgetId := n.info.id
 def key (n : Node Msg) : Option String := n.info.key
 def visible (n : Node Msg) : Bool := n.info.visible
@@ -67,12 +84,14 @@ def focusable (n : Node Msg) : Bool := n.widget.focusable && n.enabled && n.visi
 /-- The node's state, if it is an `α`. -/
 def state? (α : Type) [TypeName α] : Node Msg → Option α
   | mk _ st .. => st.get? α
+  | deferred .. => none
 
 def withInfo (f : NodeInfo → NodeInfo) : Node Msg → Node Msg
   | mk w st i l cs => mk w st (f i) l cs
+  | deferred i a s b => deferred (f i) a s b
 
 @[simp] theorem key_withInfo (f : NodeInfo → NodeInfo) (n : Node Msg) :
-    (n.withInfo f).key = (f n.info).key := by cases n; rfl
+    (n.withInfo f).key = (f n.info).key := by cases n <;> rfl
 
 def hide (n : Node Msg) : Node Msg := n.withInfo ({ · with visible := false })
 
@@ -130,12 +149,45 @@ def containerWith (w : Widget Msg) (l : Layout) (children : List (Node Msg))
 
 instance : Inhabited (Node Msg) := ⟨leaf (Widget.container "")⟩
 
+/-- A subtree built from `arg` by `view`, unless the tree on screen already has one built from an
+equal argument. -/
+def lazy {α : Type} [BEq α] [TypeName α] (arg : α) (view : α → Node Msg)
+    (key : Option String := none) : Node Msg :=
+  deferred { key } (Dynamic.mk arg) (fun d => (d.get? α).any (· == arg)) (fun _ => view arg)
+
+/-- The view `new` with its deferred nodes resolved against `old`, the tree on screen: kept from
+`old` where built from an equal argument, built otherwise. Children are matched with old children
+by key, else by position. -/
+partial def resolve (new : Node Msg) (old : Option (Node Msg)) : Node Msg :=
+  match new with
+  | deferred i arg same build =>
+    let fresh (o : Option (Node Msg)) :=
+      (resolve (build ()) o).withInfo ({ · with memo := some arg, key := i.key, reused := false })
+    match old with
+    | some o =>
+      if o.key == i.key && o.info.memo.any same then o.withInfo ({ · with reused := true })
+      else fresh (some o)
+    | none => fresh none
+  | mk w st i l cs =>
+    let olds := (old.map children).getD []
+    let byKey : Std.HashMap String (Node Msg) :=
+      olds.foldl (init := {}) fun m c => match c.key with | some k => m.insert k c | none => m
+    let rec go : Nat → List (Node Msg) → List (Node Msg)
+      | _, [] => []
+      | idx, c :: cs =>
+        let o := match c.key.bind (byKey[·]?) with
+          | some o => some o
+          | none => olds[idx]?
+        resolve c o :: go (idx + 1) cs
+    mk w st i l (go 0 cs)
+
 mutual
 /-- Gives the node and its descendants ids from `next` on, in preorder. -/
 def init : Node Msg → Nat → Node Msg × Nat
   | mk w st i l cs, next =>
     let (cs', next') := initList cs (next + 1)
     (mk w st { i with id := ⟨next⟩ } l cs', next')
+  | deferred i a s b, next => (deferred { i with id := ⟨next⟩ } a s b, next + 1)
 
 def initList : List (Node Msg) → Nat → List (Node Msg) × Nat
   | [], next => ([], next)
@@ -148,6 +200,7 @@ end
 mutual
 def ids : Node Msg → List WidgetId
   | mk _ _ i _ cs => i.id :: idsList cs
+  | deferred i .. => [i.id]
 
 def idsList : List (Node Msg) → List WidgetId
   | [] => []
@@ -158,6 +211,7 @@ mutual
 /-- What the node and its descendants ask for when they leave the tree. -/
 def dispose : Node Msg → List (Req Msg)
   | mk w st _ _ cs => w.dispose st ++ disposeList cs
+  | deferred .. => []
 
 def disposeList : List (Node Msg) → List (Req Msg)
   | [] => []
@@ -167,6 +221,7 @@ end
 mutual
 def shape : Node Msg → Shape
   | mk w _ i _ cs => .mk w.kind i.key i.visible (shapeList cs)
+  | deferred i .. => .mk "deferred" i.key i.visible []
 
 def shapeList : List (Node Msg) → List Shape
   | [] => []
@@ -175,6 +230,7 @@ end
 
 def layoutName : Node Msg → Option String
   | mk _ _ _ l _ => l.map (·.name)
+  | deferred .. => none
 
 /-- Whether `old` may pass its state to `new`. -/
 def canMerge (new old : Node Msg) : Bool :=
@@ -183,6 +239,7 @@ def canMerge (new old : Node Msg) : Bool :=
 /-- `new` with the state its widget keeps from the node it replaces. -/
 def carryState : Node Msg → Node Msg → Node Msg
   | mk w _ i l cs, mk _ ost .. => mk w (w.merge ost) i l cs
+  | n, _ => n
 
 /-- The merge's running state: the next free id, requests, and ids of old nodes merged. -/
 structure MergeState (Msg : Type) where
@@ -200,6 +257,8 @@ mutual
 def mergeNode (env : Env) : Node Msg → Node Msg → MergeState Msg → Node Msg × MergeState Msg
   | mk w st i l cs, old, s =>
     let s := { s with used := s.used.insert old.id }
+    -- A node `resolve` kept from the tree on screen stays whole.
+    if i.reused && i.id == old.id then (mk w st { i with reused := false } l cs, s) else
     let oldKids := old.children
     let byKey : Std.HashMap String (Node Msg) :=
       oldKids.foldl (init := {}) fun m c => match c.key with | some k => m.insert k c | none => m
@@ -207,6 +266,7 @@ def mergeNode (env : Env) : Node Msg → Node Msg → MergeState Msg → Node Ms
     let gone := oldKids.filter fun c => !s.used.contains c.id
     let s := { s with reqs := s.reqs ++ (gone.flatMap dispose).toArray }
     (carryState (mk w st { i with id := old.id } l cs') old, s)
+  | n, _, s => (n, s)
 
 /-- `n` merged with the old child with its key, if they can merge, else new. -/
 def mergeKeyed (env : Env) (n : Node Msg) (byKey : Std.HashMap String (Node Msg)) (s : MergeState Msg) :
@@ -251,6 +311,7 @@ mutual
 def sizeReq (env : Env) : Node Msg → SizeReq × SizeReq
   | mk w st i none _ => w.sizeReq (envAt env i) st
   | mk _ _ _ (some l) cs => l.sizeReq (itemList env cs)
+  | deferred .. => ({}, {})
 
 def itemList (env : Env) : List (Node Msg) → List Item
   | [] => []
@@ -270,6 +331,7 @@ def measure (env : Env) : Node Msg → Node Msg
   | mk w st i (some l) cs =>
     let cs := measureList env cs
     mk w st { i with req := l.sizeReq (keptItems cs) } (some l) cs
+  | n@(deferred ..) => n
 
 def measureList (env : Env) : List (Node Msg) → List (Node Msg)
   | [] => []
@@ -284,6 +346,7 @@ def place (env : Env) : Node Msg → Rect → Node Msg
     let items := keptItems cs
     let content := w.content (envAt env i) st v i.req
     mk w st { i with viewport := v, content } (some l) (placeList env cs (l.assign content items))
+  | deferred i a s b, v => deferred { i with viewport := v, content := v } a s b
 
 def placeList (env : Env) : List (Node Msg) → List Rect → List (Node Msg)
   | c :: cs, r :: rs => place env c r :: placeList env cs rs
@@ -300,6 +363,7 @@ def render (env : Env) : Node Msg → Scene
   | mk w st i _ cs =>
     if i.visible then w.render (envAt env i) st i.viewport ++ (renderList env cs).clip i.viewport
     else Scene.empty
+  | deferred .. => Scene.empty
 
 def renderList (env : Env) : List (Node Msg) → Scene
   | [] => Scene.empty
@@ -307,15 +371,18 @@ def renderList (env : Env) : List (Node Msg) → Scene
 end
 
 theorem render_within (env : Env) (n : Node Msg) : (n.render env).Within n.viewport := by
-  rcases n with ⟨w, st, i, l, cs⟩
-  · simp only [render, viewport, info]
+  match n with
+  | mk w st i l cs =>
+    simp only [render, viewport, info]
     split
     · exact Scene.append_within (w.render_within _ st i.viewport) (Scene.clip_within _ _)
     · exact Scene.empty_within _
+  | deferred .. => exact Scene.empty_within _
 
 mutual
 def find? (id : WidgetId) : Node Msg → Option (Node Msg)
   | n@(mk _ _ i _ cs) => if i.id == id then some n else findList? id cs
+  | n@(deferred i ..) => if i.id == id then some n else none
 
 def findList? (id : WidgetId) : List (Node Msg) → Option (Node Msg)
   | [] => none
@@ -326,6 +393,7 @@ mutual
 /-- The first node, in preorder, with `key`. -/
 def findKey? (key : String) : Node Msg → Option (Node Msg)
   | n@(mk _ _ i _ cs) => if i.key == some key then some n else findKeyList? key cs
+  | n@(deferred i ..) => if i.key == some key then some n else none
 
 def findKeyList? (key : String) : List (Node Msg) → Option (Node Msg)
   | [] => none
@@ -336,6 +404,7 @@ mutual
 /-- Every node's id and its path from the root, as child indices, in preorder. -/
 def pathsFrom (path : List Nat) : Node Msg → List (WidgetId × List Nat)
   | mk _ _ i _ cs => (i.id, path) :: pathsList path 0 cs
+  | deferred i .. => [(i.id, path)]
 
 def pathsList (path : List Nat) (idx : Nat) : List (Node Msg) → List (WidgetId × List Nat)
   | [] => []
@@ -356,6 +425,7 @@ def handleAt (env : Env) (id : WidgetId) (e : Event) : Node Msg → Node Msg × 
     else
       let (cs', reqs) := handleList env id e cs
       (mk w st i l cs', reqs)
+  | n@(deferred ..) => (n, none)
 
 def handleList (env : Env) (id : WidgetId) (e : Event) :
     List (Node Msg) → List (Node Msg) × Option (List (Req Msg))
@@ -382,6 +452,7 @@ def bubbleAt (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Ms
         | some (c', reqs) => some (mk w st i l (cs.set k c'), reqs)
         | none => own cs
       | none => none
+  | _, deferred .. => none
 
 /-- The ids of the node with `id` and its ancestors, nearest first. -/
 def lineage (n : Node Msg) (id : WidgetId) : List WidgetId :=
@@ -404,21 +475,17 @@ where
       | (n', some reqs) => (n', some reqs)
       | (n', none) => go as n'
 
-mutual
-/-- The tree with its messages mapped by `f`. -/
-def mapMsg {β : Type} (f : Msg → β) : Node Msg → Node β
-  | mk w st i l cs => mk (w.mapMsg f) st i l (mapMsgList f cs)
-
-def mapMsgList {β : Type} (f : Msg → β) : List (Node Msg) → List (Node β)
-  | [] => []
-  | c :: cs => mapMsg f c :: mapMsgList f cs
-end
+/-- The tree with its messages mapped by `f`; a deferred subtree is mapped when built. -/
+partial def mapMsg {β : Type} (f : Msg → β) : Node Msg → Node β
+  | mk w st i l cs => mk (w.mapMsg f) st i l (cs.map (mapMsg f))
+  | deferred i a s b => deferred i a s fun u => mapMsg f (b u)
 
 mutual
 /-- The topmost visible node at `p`: the deepest, and of overlapping siblings the later. -/
 def hit? (p : Point) : Node Msg → Option (Node Msg)
   | n@(mk _ _ i _ cs) =>
     if i.visible && i.viewport.contains p then (hitList? p cs).orElse fun _ => some n else none
+  | deferred .. => none
 
 def hitList? (p : Point) : List (Node Msg) → Option (Node Msg)
   | [] => none
@@ -445,6 +512,7 @@ theorem hit_spec (p : Point) : ∀ (n m : Node Msg), hit? p n = some m →
         simp only [Bool.and_eq_true] at hc
         exact ⟨hc.2, hc.1⟩
     · cases h
+  | deferred .., m, h => by simp [hit?] at h
 
 theorem hitList_spec (p : Point) : ∀ (cs : List (Node Msg)) (m : Node Msg), hitList? p cs = some m →
     m.viewport.contains p = true ∧ m.visible = true
@@ -468,6 +536,7 @@ mutual
 def focusables : Node Msg → List WidgetId
   | n@(mk _ _ i _ cs) =>
     if i.visible then (if n.focusable then [i.id] else []) ++ focusablesList cs else []
+  | deferred .. => []
 
 def focusablesList : List (Node Msg) → List WidgetId
   | [] => []
@@ -479,6 +548,7 @@ mutual
 def keyedPlacements : Node Msg → List (String × Rect)
   | mk _ _ i _ cs =>
     if i.visible then (i.key.toList.map (·, i.viewport)) ++ keyedPlacementsList cs else []
+  | deferred .. => []
 
 def keyedPlacementsList : List (Node Msg) → List (String × Rect)
   | [] => []
@@ -491,6 +561,7 @@ def indexInto (path : Array Nat) (acc : Array (WidgetId × Rect × List Nat)) :
     Node Msg → Array (WidgetId × Rect × List Nat)
   | mk _ _ i _ cs =>
     if i.visible then indexList path 0 (acc.push (i.id, i.viewport, path.toList)) cs else acc
+  | deferred .. => acc
 
 def indexList (path : Array Nat) (idx : Nat) (acc : Array (WidgetId × Rect × List Nat)) :
     List (Node Msg) → Array (WidgetId × Rect × List Nat)
@@ -505,6 +576,7 @@ mutual
 /-- Every visible node's id and box. -/
 def placements : Node Msg → List (WidgetId × Rect)
   | mk _ _ i _ cs => if i.visible then (i.id, i.viewport) :: placementsList cs else []
+  | deferred .. => []
 
 def placementsList : List (Node Msg) → List (WidgetId × Rect)
   | [] => []

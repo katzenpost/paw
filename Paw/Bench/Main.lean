@@ -36,26 +36,32 @@ inductive Msg where
   | add
   deriving Inhabited
 
+/-- A row, the argument its lazy view is built from. -/
+structure Row where
+  id : Nat
+  text : String
+  deriving BEq, TypeName, Inhabited
+
 structure Model where
-  items : List (Nat × String)
+  items : List Row
   draft : String := ""
   deriving BEq, Inhabited
 
 def update : (o : Origin) → Msg → UpdateM Model Msg [] o Unit
   | _, .typed s => modify fun (m, cs) => ({ m with draft := s }, cs)
-  | _, .remove id => modify fun (m, cs) => ({ m with items := m.items.filter (·.1 != id) }, cs)
-  | _, .add => modify fun (m, cs) => ({ m with items := (m.items.length, m.draft) :: m.items }, cs)
+  | _, .remove id => modify fun (m, cs) => ({ m with items := m.items.filter (·.id != id) }, cs)
+  | _, .add => modify fun (m, cs) => ({ m with items := ⟨m.items.length, m.draft⟩ :: m.items }, cs)
 
 def view (m : Model) : Node Msg :=
   Ui.col [
     Ui.row [Ui.textField m.draft .typed {} "draft", Ui.button "Add" .add "add"],
-    Ui.scroll (Ui.list m.items (toString ·.1) fun (id, s) =>
-      Ui.row [Ui.text (SafeText.filter s), Ui.spacer, Ui.button "Remove" (.remove id)]) "list"]
+    Ui.scroll (Ui.list m.items (toString ·.id) fun row => Ui.lazy row fun r =>
+      Ui.row [Ui.text (SafeText.filter r.text), Ui.spacer, Ui.button "Remove" (.remove r.id)]) "list"]
 
 def app : App [] := { Model := Model, Msg := Msg, init := default, update, view }
 
 def model (n : Nat) : Model :=
-  { items := (List.range n).map fun i => (i, s!"message number {i}, which says something") }
+  { items := (List.range n).map fun i => ⟨i, s!"message number {i}, which says something"⟩ }
 
 def measure : TextStyle → SafeText → Int × Int := Env.mock.measure
 
@@ -135,7 +141,7 @@ def layoutBenches : IO (Array LeanBench.Bench) := do
 def treeBenches : IO (Array LeanBench.Bench) := do
   let env : Env := { measure }
   let v := Rect.ofXYWH 0 0 (px 800) (px 600)
-  let built (n : Nat) := ((view (model n)).init 1).1.resize env v
+  let built (n : Nat) := (((view (model n)).resolve none).init 1).1.resize env v
   let m100 ← IO.mkRef (model 100)
   let m1000 ← IO.mkRef (model 1000)
   let t100 ← IO.mkRef (built 100)
@@ -146,18 +152,20 @@ def treeBenches : IO (Array LeanBench.Bench) := do
   let merged ← IO.mkRef ((default : Node Msg), ([] : List (Req Msg)), 0)
   let point ← IO.mkRef (none : Option (Node Msg))
   return #[
-    mkBench "tree view and init 100" "tree" m100 node fun m => ((view m).init 1).1,
-    mkBench "tree view and init 1000" "tree" m1000 node fun m => ((view m).init 1).1,
+    mkBench "tree view and init 100" "tree" m100 node fun m => (((view m).resolve none).init 1).1,
+    mkBench "tree view and init 1000" "tree" m1000 node fun m => (((view m).resolve none).init 1).1,
     mkBench "tree resize 1000" "tree" t1000 node (·.resize env v),
     mkBench "tree render 100" "tree" t100 scene (·.render env),
     mkBench "tree render 1000" "tree" t1000 scene (·.render env),
     { name := "tree merge 1000 after removing one", config := cfg "tree"
-      action := do merged.set ((view (← next1000.get)).merge env (← t1000.get) 5000) },
+      action := do
+        let old ← t1000.get
+        merged.set (((view (← next1000.get)).resolve (some old)).merge env old 5000) },
     mkBench "tree hit test 1000" "tree" t1000 point (·.hit? ⟨px 400, px 300⟩)]
 
 def routeBenches : IO (Array LeanBench.Bench) := do
   let env : Env := { measure }
-  let tree := ((view (model 1000)).init 1).1.resize env (Rect.ofXYWH 0 0 (px 800) (px 600))
+  let tree := (((view (model 1000)).resolve none).init 1).1.resize env (Rect.ofXYWH 0 0 (px 800) (px 600))
   let t ← IO.mkRef tree
   let rt ← IO.mkRef (({} : Router).observe tree 0)
   let out ← IO.mkRef (({} : Router), ([] : List Delivery))

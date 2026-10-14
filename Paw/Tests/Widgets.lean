@@ -83,7 +83,7 @@ def update : (o : Origin) → Msg → UpdateM Model Msg [] o Unit
   | _, .shuffle => modify fun (m, cs) => ({ m with items := m.items.reverse }, cs)
   | _, .shorten => modify fun (m, cs) => ({ m with draft := (m.draft.take 1).toString }, cs)
 
-/-- In a 200 × 300 window, rows 20 pixels tall with no spacing: a button (y 0), a checkbox
+/-- In a 200 × 420 window, rows 20 pixels tall with no spacing: a button (y 0), a checkbox
 (y 20), a text field (y 40), a password field (y 60), and a 60-pixel scroll (y 80) over five
 labels, under a ctrl-s binding. -/
 def view (m : Model) : Node Msg :=
@@ -93,10 +93,11 @@ def view (m : Model) : Node Msg :=
       Ui.checkbox "Check" m.checked .toggled "check",
       Ui.textField m.draft .typed {} "draft",
       Ui.passwordField m.secret .pass "pass",
-      Node.container (box { expand := true }) [Ui.scroll (Ui.col (spacing := 0)
-        ((List.range 5).map fun i => Ui.label s!"line {i}"))] |>.withInfo ({ · with key := some "sc" }),
+      Ui.height (px 60) (Ui.scroll (Ui.col (spacing := 0)
+        ((List.range 5).map fun i => Ui.label s!"line {i}"))) |>.withInfo ({ · with key := some "sc" }),
       Ui.list m.items id (fun s => Ui.textField s .typed),
       Ui.pad (px 2) (Ui.label "padded"),
+      Ui.lazy m.clicks (fun n => Ui.label s!"clicked {n} times") "lazy",
       (Ui.width (px 50) (Ui.label "narrow")).withInfo ({ · with key := some "narrow" }),
       Ui.row [Ui.text (SafeText.filter "a\x1bb"), Ui.paragraph "x\ny", Ui.spacer]]
 
@@ -104,7 +105,7 @@ def app : App [] := { Model := Model, Msg := Msg, init := {}, update, view }
 
 /-- The runtime, with every widget still since time 0. -/
 def begin : Runtime app :=
-  (Paw.Runtime.start app (Rect.ofXYWH 0 0 (px 200) (px 300)) 0 Env.mock.measure).1
+  (Paw.Runtime.start app (Rect.ofXYWH 0 0 (px 200) (px 420)) 0 Env.mock.measure).1
 
 def step (rt : Runtime app) (k : InputKind) (t : Nat) (synthetic := false) :
     Runtime app × List (Output Msg) :=
@@ -150,6 +151,7 @@ def appTests : TestM Unit := do
   -- Button.
   let (rt, _) := click rt "go" 1000
   checkEq "a click on the button" 1 rt.model.clicks
+  check "a lazy view is built anew when its argument changes" ((texts rt).contains "clicked 1 times")
   let rt := key rt .enter 2000
   checkEq "Enter on the focused button" 2 rt.model.clicks
   let rt := key rt (.char ' ') 2100

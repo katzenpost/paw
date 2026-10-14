@@ -14,6 +14,9 @@ draws lies within the box it is given. Unlike monomer's, these functions never s
 the tree is walked by `Paw.Tree`, which merges, lays out and draws children itself, so a widget
 cannot draw or act on anything but its own box and state. -/
 
+/-! Common types as `Ui.lazy` arguments. -/
+deriving instance TypeName for String, Nat, Int, Bool
+
 namespace Paw
 
 /-- The state of a widget that keeps none. -/

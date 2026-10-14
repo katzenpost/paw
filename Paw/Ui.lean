@@ -62,6 +62,12 @@ def list {α : Type} (items : List α) (key : α → String) (view : α → Node
     (spacing : Int := px 4) : Node Msg :=
   col (items.map fun a => (view a).withInfo ({ · with key := some (key a) })) spacing
 
+/-- `view arg`, built only when `arg` differs from the argument of what is on screen there; how a
+long list avoids rebuilding rows that did not change. -/
+def lazy {α : Type} [BEq α] [TypeName α] (arg : α) (view : α → Node Msg)
+    (key : Option String := none) : Node Msg :=
+  Node.lazy arg view key
+
 /-- The child, scrolled vertically. -/
 def scroll (child : Node Msg) (key : Option String := none) : Node Msg :=
   Node.containerWith scrollWidget scrollLayout [child] key

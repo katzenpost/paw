@@ -142,5 +142,31 @@ def tests : TestM Unit := do
   checkEq "find nothing" none ((laid.find? ⟨42⟩).map (·.id))
   checkEq "paths" [(1, []), (2, [0]), (3, [1]), (4, [2])] (laid.paths.map fun (i, p) => (i.n, p))
   checkEq "a mock measure" (px 30, px 20) (env.measure {} (SafeText.trusted "abc"))
+  -- Lazy subtrees.
+  let lazyView (arg width : Nat) : Node Msg :=
+    col [Node.lazy arg (fun _ => leaf (counter 1 (width := width))) "row", leaf plain]
+  let (t, next) := ((lazyView 1 10).resolve none).init 1
+  let rowId := (t.findKey? "row").map (·.id) |>.getD ⟨0⟩
+  let (t, _) := clickAt t rowId
+  let widthOf (t : Node Msg) := ((t.findKey? "row").map fun n => (n.resize env (r 0 0 100 100)).sizeReq env |>.1)
+  checkEq "a lazy subtree is built" (some (SizeReq.fixedSize (sz 10))) (widthOf t)
+  let same := (lazyView 1 30).resolve (some t)
+  let (m, reqs, next') := same.merge env t next
+  checkEq "an equal argument keeps what is on screen, unbuilt" (some (SizeReq.fixedSize (sz 10))) (widthOf m)
+  checkEq "with its state" [1, 999] (counts m)
+  checkEq "and its id" (some rowId) ((m.findKey? "row").map (·.id))
+  checkEq "nothing disposed, no new ids" ([], next) (reqs, next')
+  let changed := (lazyView 2 30).resolve (some m)
+  let (m2, _, _) := changed.merge env m next
+  checkEq "a different argument builds anew" (some (SizeReq.fixedSize (sz 30))) (widthOf m2)
+  checkEq "and the new subtree takes over the state" [1, 999] (counts m2)
+  let (_, reqs, _) := ((col [leaf plain]).resolve (some m2)).merge env m2 next
+  checkEq "a lazy subtree that goes is disposed" [Req.emit (Msg.gone 1)] reqs
+  let unresolved := lazyView 1 10
+  checkEq "an unresolved subtree draws nothing" 0 ((unresolved.init 1).1.resize env (r 0 0 50 50) |>.render env).items.length
+  check "and has the shape of a deferred node"
+    ((unresolved.children.head?.map (·.shape)).any fun | .mk k _ _ _ => k == "deferred")
+  let mapped := (Node.lazy 3 (fun _ => leaf (counter 1)) : Node Msg).mapMsg (fun _ => ())
+  checkEq "a deferred subtree is mapped when built" "counter" (mapped.resolve none).kind
 
 end Paw.Tests.Tree

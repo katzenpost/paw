@@ -120,7 +120,8 @@ def deliver (rt : Runtime app) (d : Delivery) : Runtime app × List (Output app.
 /-- The view rebuilt from the model, merged with the tree on screen and laid out; what nodes that
 left the tree asked on leaving is handled as messages of origin `other`. -/
 def rebuild (rt : Runtime app) : Runtime app × List (Output app.Msg) :=
-  let (tree, reqs, nextId) := (app.view rt.model).merge rt.env rt.tree rt.nextId
+  let view := (app.view rt.model).resolve (some rt.tree)
+  let (tree, reqs, nextId) := view.merge rt.env rt.tree rt.nextId
   let (rt, outs) := { rt with tree, nextId }.applyReqs .other reqs
   (rt.layout, outs)
 
@@ -136,7 +137,7 @@ def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List
 /-- The runtime for `app` in a window of `window`, at `now`, and its first scene. -/
 def start (app : App caps) (window : Rect) (now : Nat)
     (measure : TextStyle → SafeText → Int × Int) : Runtime app × List (Output app.Msg) :=
-  let (tree, nextId) := (app.view app.init).init 1
+  let (tree, nextId) := ((app.view app.init).resolve none).init 1
   let rt : Runtime app := { model := app.init, tree, nextId, router := {}, window, now, measure }
   let rt := rt.layout
   (rt, [rt.present])

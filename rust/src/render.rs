@@ -39,16 +39,19 @@ fn paint(c: &Color) -> Paint<'static> {
 
 fn rounded(l: f32, t: f32, r: f32, b: f32, radius: f32) -> Option<Path> {
     let rad = radius.min((r - l) / 2.0).min((b - t) / 2.0).max(0.0);
+    // Each corner a quarter circle, as cubic curves with the usual constant, so a square with a
+    // radius of half its side is a circle.
+    let k = rad * (1.0 - 0.552_284_8);
     let mut pb = PathBuilder::new();
     pb.move_to(l + rad, t);
     pb.line_to(r - rad, t);
-    pb.quad_to(r, t, r, t + rad);
+    pb.cubic_to(r - k, t, r, t + k, r, t + rad);
     pb.line_to(r, b - rad);
-    pb.quad_to(r, b, r - rad, b);
+    pb.cubic_to(r, b - k, r - k, b, r - rad, b);
     pb.line_to(l + rad, b);
-    pb.quad_to(l, b, l, b - rad);
+    pb.cubic_to(l + k, b, l, b - k, l, b - rad);
     pb.line_to(l, t + rad);
-    pb.quad_to(l, t, l + rad, t);
+    pb.cubic_to(l, t + k, l + k, t, l + rad, t);
     pb.close();
     pb.finish()
 }

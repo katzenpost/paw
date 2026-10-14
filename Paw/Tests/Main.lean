@@ -25,6 +25,7 @@ import Paw.Tests.Wrap
 import Paw.Tests.Edit
 import Paw.Tests.Choice
 import Paw.Tests.Input
+import Paw.Tests.Slider
 
 open Paw.Tests
 
@@ -51,5 +52,6 @@ def main : IO UInt32 := do
     ("wrap", Wrap.tests),
     ("edit", Edit.tests),
     ("choice", Choice.tests),
-    ("input", Input.tests)].mapM fun (n, t) => runSuite n t
+    ("input", Input.tests),
+    ("slider", Slider.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

@@ -70,6 +70,9 @@ inductive Msg where
   | price (p : Price)
   | date (d : Format.Date)
   | time (t : Format.Time)
+  | volume (v : Widgets.Ranged 0 100)
+  | treble (v : Widgets.Ranged 0 10)
+  | bass (v : Widgets.Ranged 0 10)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -95,13 +98,17 @@ structure Model where
   price : Price := ⟨1250, by decide⟩
   date : Format.Date := ⟨2026, 10, 14, by decide⟩
   time : Format.Time := ⟨9, 30, by decide⟩
+  volume : Widgets.Ranged 0 100 := ⟨40, by decide⟩
+  treble : Widgets.Ranged 0 10 := ⟨5, by decide⟩
+  bass : Widgets.Ranged 0 10 := ⟨5, by decide⟩
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
     a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened &&
     a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture && a.notes == b.notes && a.page == b.page && a.size == b.size &&
     a.align == b.align && a.bold == b.bold && a.quantity.val == b.quantity.val && a.price.val == b.price.val &&
-    a.date == b.date && a.time == b.time
+    a.date == b.date && a.time == b.time && a.volume.val == b.volume.val && a.treble.val == b.treble.val &&
+    a.bass.val == b.bass.val
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -160,6 +167,9 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .price p => modify fun (m, cs) => ({ m with price := p }, cs)
   | _, .date d => modify fun (m, cs) => ({ m with date := d }, cs)
   | _, .time t => modify fun (m, cs) => ({ m with time := t }, cs)
+  | _, .volume v => modify fun (m, cs) => ({ m with volume := v }, cs)
+  | _, .treble v => modify fun (m, cs) => ({ m with treble := v }, cs)
+  | _, .bass v => modify fun (m, cs) => ({ m with bass := v }, cs)
 
 /-- Radio buttons, option buttons, a toggle button and separators. -/
 def choicesPage (m : Model) : Node Msg :=
@@ -172,7 +182,12 @@ def choicesPage (m : Model) : Node Msg :=
     Ui.row [Ui.optionButton "Left" Align.left m.align .align "left",
       Ui.optionButton "Center" Align.center m.align .align "center",
       Ui.optionButton "Right" Align.right m.align .align "right", Ui.separator (vertical := true),
-      Ui.toggleButton "Bold" m.bold .bold "bold"]] (px 8)
+      Ui.toggleButton "Bold" m.bold .bold "bold"],
+    Ui.separator,
+    Ui.row [Ui.label "Volume", Ui.width (px 240) (Ui.hslider m.volume .volume (key := "volume")),
+      Ui.label s!"{m.volume.val}" "volumeValue"],
+    Ui.row [Ui.label "Treble", Ui.height (px 100) (Ui.vslider m.treble .treble (key := "treble")),
+      Ui.label "Bass", Ui.dial m.bass .bass (key := "bass"), Ui.label s!"{m.treble.val} {m.bass.val}" "toneValue"]] (px 8)
 
 /-- Fields for numbers, dates and times, which take only text that reads as one. -/
 def inputsPage (m : Model) : Node Msg :=

@@ -13,6 +13,7 @@ import Paw.Widgets.Anim
 import Paw.Widgets.Image
 import Paw.Widgets.Choice
 import Paw.Widgets.Input
+import Paw.Widgets.Slider
 
 /-! # Building views
 
@@ -151,6 +152,21 @@ def dateField (value : Format.Date) (onChange : Format.Date → Msg) (key : Opti
 
 def timeField (value : Format.Time) (onChange : Format.Time → Msg) (key : Option String := none) : Node Msg :=
   Node.leaf (Widgets.timeField value onChange) key
+
+/-- A slider from `lo` to `hi`, across. -/
+def hslider {lo hi : Int} (value : Ranged lo hi) (onChange : Ranged lo hi → Msg) (step : Nat := 1)
+    (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.slider value onChange false step) key
+
+/-- A slider from `lo` at the bottom to `hi` at the top. -/
+def vslider {lo hi : Int} (value : Ranged lo hi) (onChange : Ranged lo hi → Msg) (step : Nat := 1)
+    (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.slider value onChange true step) key
+
+/-- A dial from `lo` to `hi`, turned by dragging up or down. -/
+def dial {lo hi : Int} (value : Ranged lo hi) (onChange : Ranged lo hi → Msg) (step : Nat := 1)
+    (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.dial value onChange step) key
 
 /-- A line across the box, or down it if `vertical`. -/
 def separator (vertical : Bool := false) : Node Msg := Node.leaf (Widgets.separator vertical)

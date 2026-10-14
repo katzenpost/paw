@@ -28,5 +28,6 @@ import Paw.Widgets.Image
 import Paw.Widgets.Choice
 import Paw.Format
 import Paw.Widgets.Input
+import Paw.Widgets.Slider
 import Paw.Ui
 import Paw.Linux

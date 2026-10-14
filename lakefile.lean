@@ -7,6 +7,9 @@ package paw where
 @[default_target]
 lean_lib Paw
 
+lean_lib Gallery where
+  srcDir := "examples"
+
 lean_exe «paw-test» where
   root := `Paw.Tests.Main
 

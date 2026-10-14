@@ -43,9 +43,21 @@ structure Env where
   focused : Option WidgetId := none
   hovered : Option WidgetId := none
   pressed : Option WidgetId := none
+  /-- The widget being asked, which the tree sets. -/
+  self : WidgetId := ⟨0⟩
+  /-- The rectangle the widget's children are laid out in, which the tree sets. -/
+  content : Rect := default
 
 /-- Text measured as monomer's tests measure it: 10 pixels a character, 20 pixels a line. -/
 def Env.mock : Env := { measure := fun _ t => (px (t.text.length * 10), px 20) }
+
+namespace Env
+
+def isFocused (env : Env) : Bool := env.focused == some env.self
+def isHovered (env : Env) : Bool := env.hovered == some env.self
+def isPressed (env : Env) : Bool := env.pressed == some env.self
+
+end Env
 
 /-- What a widget asks of the runtime. -/
 inductive Req (Msg : Type) where
@@ -74,6 +86,10 @@ structure Widget (Msg : Type) where
   /-- The state to keep, given the state of the widget this one replaces on a rebuild. -/
   merge : Dynamic → Dynamic
   sizeReq : Env → Dynamic → SizeReq × SizeReq
+  /-- For a container, the rectangle its children are laid out in, given its box and what they
+  ask for: the box itself, or for a scroll, a rectangle as large as the content, shifted by the
+  scroll. Children are still drawn clipped to the box. -/
+  content : Env → Dynamic → Rect → SizeReq × SizeReq → Rect
   render : Env → Dynamic → Rect → Scene
   render_within : ∀ env st v, (render env st v).Within v
   handle : Env → Dynamic → Rect → Event → Option (Dynamic × List (Req Msg))
@@ -87,6 +103,7 @@ structure Widget.Spec (Msg σ : Type) where
   init : σ
   merge : σ → σ := id
   sizeReq : Env → σ → SizeReq × SizeReq
+  content : Env → σ → Rect → SizeReq × SizeReq → Rect := fun _ _ v _ => v
   render : Env → σ → Rect → Scene
   render_within : ∀ env st v, (render env st v).Within v
   handle : Env → σ → Rect → Event → Option (σ × List (Req Msg)) := fun _ _ _ _ => none
@@ -105,6 +122,7 @@ def build (s : Widget.Spec Msg σ) : Widget Msg where
   init := Dynamic.mk s.init
   merge := fun d => Dynamic.mk (((d.get? σ).map s.merge).getD s.init)
   sizeReq := fun env d => s.sizeReq env (s.state d)
+  content := fun env d v r => s.content env (s.state d) v r
   render := fun env d v => s.render env (s.state d) v
   render_within := fun env d v => s.render_within env (s.state d) v
   handle := fun env d v e =>
@@ -121,6 +139,7 @@ def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β whe
   init := w.init
   merge := w.merge
   sizeReq := w.sizeReq
+  content := w.content
   render := w.render
   render_within := w.render_within
   handle := fun env st v e => (w.handle env st v e).map fun (st, rs) => (st, rs.map (Req.map f))

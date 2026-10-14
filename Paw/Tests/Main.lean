@@ -14,6 +14,8 @@ import Paw.Tests.Tree
 import Paw.Tests.Route
 import Paw.Tests.Cmd
 import Paw.Tests.Runtime
+import Paw.Tests.Widgets
+import Paw.Tests.Gallery
 
 open Paw.Tests
 
@@ -29,5 +31,7 @@ def main : IO UInt32 := do
     ("tree", Tree.tests),
     ("route", Route.tests),
     ("cmd", Cmd.tests),
-    ("runtime", Runtime.tests)].mapM fun (n, t) => runSuite n t
+    ("runtime", Runtime.tests),
+    ("widgets", Widgets.tests),
+    ("gallery", Gallery.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

@@ -16,3 +16,7 @@ import Paw.Tree
 import Paw.Route
 import Paw.Cmd
 import Paw.Runtime
+import Paw.Widgets.Basic
+import Paw.Widgets.TextField
+import Paw.Widgets.Scroll
+import Paw.Ui

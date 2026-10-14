@@ -27,6 +27,8 @@ structure NodeInfo where
   visible : Bool := true
   enabled : Bool := true
   viewport : Rect := default
+  /-- Where the children are laid out: the viewport, or for a scroll, the shifted content. -/
+  content : Rect := default
   deriving Repr, Inhabited
 
 inductive Node (Msg : Type) where
@@ -49,6 +51,9 @@ def id (n : Node Msg) : WidgetId := n.info.id
 def key (n : Node Msg) : Option String := n.info.key
 def visible (n : Node Msg) : Bool := n.info.visible
 def viewport (n : Node Msg) : Rect := n.info.viewport
+
+/-- The environment as the widget at `i` sees it. -/
+def envAt (env : Env) (i : NodeInfo) : Env := { env with self := i.id, content := i.content }
 def enabled (n : Node Msg) : Bool := n.info.enabled
 def kind (n : Node Msg) : String := n.widget.kind
 
@@ -238,7 +243,7 @@ def merge (new : Node Msg) (env : Env) (old : Node Msg) (next : Nat) :
 mutual
 /-- What the node asks for: a leaf's widget decides, a container's layout. -/
 def sizeReq (env : Env) : Node Msg → SizeReq × SizeReq
-  | mk w st _ none _ => w.sizeReq env st
+  | mk w st i none _ => w.sizeReq (envAt env i) st
   | mk _ _ _ (some l) cs => l.sizeReq (itemList env cs)
 
 def itemList (env : Env) : List (Node Msg) → List Item
@@ -251,9 +256,11 @@ end
 mutual
 /-- The node placed in `v`, and its children where its layout puts them. -/
 def resize (env : Env) : Node Msg → Rect → Node Msg
-  | mk w st i none cs, v => mk w st { i with viewport := v } none cs
+  | mk w st i none cs, v => mk w st { i with viewport := v, content := v } none cs
   | mk w st i (some l) cs, v =>
-    mk w st { i with viewport := v } (some l) (resizeList env cs (l.assign v (itemList env cs)))
+    let items := itemList env cs
+    let content := w.content (envAt env i) st v (l.sizeReq items)
+    mk w st { i with viewport := v, content } (some l) (resizeList env cs (l.assign content items))
 
 def resizeList (env : Env) : List (Node Msg) → List Rect → List (Node Msg)
   | c :: cs, r :: rs => resize env c r :: resizeList env cs rs
@@ -265,7 +272,7 @@ mutual
 /-- What the node and its descendants draw, within its box. -/
 def render (env : Env) : Node Msg → Scene
   | mk w st i _ cs =>
-    if i.visible then w.render env st i.viewport ++ (renderList env cs).clip i.viewport
+    if i.visible then w.render (envAt env i) st i.viewport ++ (renderList env cs).clip i.viewport
     else Scene.empty
 
 def renderList (env : Env) : List (Node Msg) → Scene
@@ -277,7 +284,7 @@ theorem render_within (env : Env) (n : Node Msg) : (n.render env).Within n.viewp
   rcases n with ⟨w, st, i, l, cs⟩
   · simp only [render, viewport, info]
     split
-    · exact Scene.append_within (w.render_within env st i.viewport) (Scene.clip_within _ _)
+    · exact Scene.append_within (w.render_within _ st i.viewport) (Scene.clip_within _ _)
     · exact Scene.empty_within _
 
 mutual
@@ -287,6 +294,16 @@ def find? (id : WidgetId) : Node Msg → Option (Node Msg)
 def findList? (id : WidgetId) : List (Node Msg) → Option (Node Msg)
   | [] => none
   | c :: cs => (find? id c).orElse fun _ => findList? id cs
+end
+
+mutual
+/-- The first node, in preorder, with `key`. -/
+def findKey? (key : String) : Node Msg → Option (Node Msg)
+  | n@(mk _ _ i _ cs) => if i.key == some key then some n else findKeyList? key cs
+
+def findKeyList? (key : String) : List (Node Msg) → Option (Node Msg)
+  | [] => none
+  | c :: cs => (findKey? key c).orElse fun _ => findKeyList? key cs
 end
 
 mutual
@@ -307,7 +324,7 @@ it did not handle it. -/
 def handleAt (env : Env) (id : WidgetId) (e : Event) : Node Msg → Node Msg × Option (List (Req Msg))
   | mk w st i l cs =>
     if i.id == id then
-      match w.handle env st i.viewport e with
+      match w.handle (envAt env i) st i.viewport e with
       | some (st', reqs) => (mk w st' i l cs, some reqs)
       | none => (mk w st i l cs, none)
     else

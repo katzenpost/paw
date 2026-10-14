@@ -100,6 +100,7 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | Lenses into the model for widget values | Widgets take values and report changes as messages, as in Elm | One direction for data to flow |
 | SDL2 and NanoVG through OpenGL | The Rust layer above | Wayland, Android and accessibility support |
 | A stack that lacks room places children past its box, for the parent to fix | Children are cut at the box's edge | `assign_within` holds for every layout; a scroll is how content larger than its box is shown |
+| A scroll places its child past its own box | The child is laid out in a content rectangle the scroll names, and drawn clipped to the scroll's box | `assign_within` holds relative to the content rectangle; the clip law is unchanged |
 | Shrinking flexible sizes in one pass, clamped at zero, so a child weighted to give up more than it has leaves the rest overflowing | Shrinking in rounds: what one child cannot give, the others give next round | Children fit whenever their rigid sizes do; a random test checks it |
 
 ## Laws in types
@@ -212,6 +213,13 @@ The full `Widget` record also has monomer's merge, event and dispose functions. 
 | `Node` | `hit_spec`: hit-testing returns only a visible node whose box contains the point; of overlapping siblings, the later, which is drawn on top | The user clicks what they see |
 | `Router` | `nextFocus_mem`: focus moves only to a widget in the focus order, which holds only visible, enabled, focusable widgets | Focus is the user's |
 | `Node` | keys unique among siblings, by `dedupKeys_nodup` | State is never handed to another widget |
+
+Widgets draw with `Scene.inBox v ds`, every item clipped to the box `v`, and `Scene.inBox_within` is their `render_within`.
+
+A container's children are laid out in its content rectangle, which its widget names: the box itself, or for a scroll, a rectangle as tall as the content, shifted up by the scroll offset and narrowed by a gutter for the scroll bar. The layout laws hold relative to the content rectangle, and `Node.render` clips the children to the box, so the tree-wide law is unchanged. Two things follow:
+
+- **The gutter is a reserved region.** The child's box never covers it, so no content can draw over the bar.
+- **Scrolling is movement.** The router sees every widget in the content move, and treats each as unstable for `stableMs`. A click right after a scroll is delivered, but designates nothing.
 
 Stacks and grids prove `assign_disjoint` once, between them. Each is an `Axial` layout that only decides a size per child along its axis. `Axial.toSeparated` places those sizes one after another and proves all three laws from a lemma about the placement. A new layout along one axis gets the laws by supplying its size function and a proof that it returns one size per child.
 

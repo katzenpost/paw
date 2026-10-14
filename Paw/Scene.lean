@@ -146,6 +146,15 @@ theorem clip_within (v : Rect) (s : Scene) : (s.clip v).Within v := by
 
 theorem empty_within (v : Rect) : Scene.empty.Within v := fun _ h => nomatch h
 
+/-- Draw items, each clipped to the box `v`: how widgets draw, with their law for free. -/
+def inBox (v : Rect) (ds : List Draw) : Scene := ⟨ds.map (v, ·)⟩
+
+theorem inBox_within (v : Rect) (ds : List Draw) : (Scene.inBox v ds).Within v := by
+  intro i hi
+  simp only [inBox, List.mem_map] at hi
+  obtain ⟨_, -, rfl⟩ := hi
+  exact Rect.within_refl v
+
 theorem draw_within {c v : Rect} (d : Draw) (h : c.Within v) : (Scene.draw c d).Within v := by
   intro i hi
   simp only [draw, List.mem_singleton] at hi

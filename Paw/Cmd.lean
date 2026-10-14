@@ -52,7 +52,25 @@ def charOk (c : Char) : Bool :=
 def allowed (u : String) : Bool :=
   u.all charOk && schemes.any fun p => u.toLower.startsWith p && u.length > p.length
 
+/-- Where a link goes, as the user should be told before following it: its scheme and host, such
+as `https://github.com`, or for `mailto:` the address. -/
+def destination (u : String) : String :=
+  match schemes.find? fun p => u.toLower.startsWith p with
+  | some "mailto:" => u
+  | some p =>
+    let rest := (u.drop p.length).toString
+    p ++ String.ofList (rest.toList.takeWhile fun c => c != '/' && c != '?' && c != '#')
+  | none => u
+
 end Uri
+
+/-- A link that may be opened: one with an allowed scheme and only printable characters. -/
+structure Link where
+  uri : String
+  ok : Uri.allowed uri = true
+
+/-- `uri` as a link, if it is one Paw opens. -/
+def Link.parse? (uri : String) : Option Link := if h : Uri.allowed uri = true then some ⟨uri, h⟩ else none
 
 /-- Effects that use authority, by the capability each needs. -/
 inductive Effect : Cap → Type where
@@ -76,6 +94,9 @@ def DesignatedBy {c : Cap} (e : Effect c) (d : Designation) : Prop :=
 
 instance {c : Cap} (e : Effect c) (d : Designation) : Decidable (e.DesignatedBy d) := by
   unfold DesignatedBy; infer_instance
+
+/-- An effect opening `link`, for the widget keyed `target`. -/
+def openLink (target : String) (link : Link) : Effect .openUri := .openUri target link.uri link.ok
 
 /-- An effect opening `uri`, if it is a link Paw opens. -/
 def openUri? (target uri : String) : Option (Effect .openUri) :=

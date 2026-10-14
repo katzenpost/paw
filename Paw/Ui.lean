@@ -16,6 +16,8 @@ import Paw.Widgets.Input
 import Paw.Widgets.Slider
 import Paw.Widgets.List
 import Paw.Widgets.Split
+import Paw.Widgets.Link
+import Paw.Cmd
 
 /-! # Building views
 
@@ -295,3 +297,9 @@ def confirm (m : Modal) (title : SafeName) (body : String) (onAccept onCancel : 
     row [spacer, button cancel onCancel "cancel",
       Node.leaf (Widgets.button (SafeText.trusted accept) onAccept (designated := true)) "accept"]] (px 8))
     onCancel
+
+/-- A link with `caption`, asking for `onOpen` when activated; the app opens it with
+`Effect.openLink key link`, which needs the user's designation of this widget. Where it really goes,
+its scheme and host, is shown in a tooltip on hover and focus, whatever the caption says. -/
+def externalLink (caption : SafeText) (link : Link) (onOpen : Msg) (key : String) : Node Msg :=
+  tooltip (Uri.destination link.uri) (Node.leaf (Widgets.link caption (SafeText.filter link.uri) onOpen) key)

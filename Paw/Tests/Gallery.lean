@@ -62,7 +62,10 @@ def tests : TestM Unit := do
   let tree := rt.tree.accessTree rt.env
   let named (r : Role) (n : String) := tree.any fun a => a.access.role == r && a.access.name.text == n
   check "the window is the root" ((tree.head?.map (·.access.role)) == some .window)
-  check "buttons by their captions" (named .button "Add" && named .button "Open link")
+  check "buttons by their captions" (named .button "Add" && named .button "Copy name")
+  check "a link by its caption, with where it goes"
+    (tree.any fun a => a.access.role == .link && a.access.name.text == "Katzenpost on GitHub" &&
+      a.access.value.map (·.text) == some "https://github.com/katzenpost")
   check "a check box with its state" (tree.any fun a => a.access.role == .checkBox && a.access.checked == some false)
   check "a text field with its value" (tree.any fun a => a.access.role == .textInput &&
     a.access.value.map (·.text) == some "Ada")
@@ -104,3 +107,37 @@ def tests : TestM Unit := do
   check "ctrl-q quits" (rt.quit && (requests outs).contains .quit)
 
 end Paw.Tests.Gallery
+
+namespace Paw.Tests.Link
+
+open Paw
+
+abbrev App := _root_.Gallery.app
+
+def texts (rt : Runtime App) : List String :=
+  match rt.present with
+  | .request (.present s) => s.items.filterMap fun (_, d) => match d with
+    | .text _ t _ => some t.text
+    | _ => none
+  | _ => []
+
+def tests : TestM Unit := do
+  checkEq "a link's destination: its scheme and host" "https://github.com"
+    (Uri.destination "https://github.com/katzenpost?tab=repositories")
+  checkEq "a port is part of the host" "http://example.org:8080" (Uri.destination "http://example.org:8080/a#b")
+  checkEq "a mail link: its address" "mailto:ada@example.org" (Uri.destination "mailto:ada@example.org")
+  check "a link Paw does not open is no link" (Link.parse? "javascript:alert(1)").isNone
+  let rt := Paw.Tests.Gallery.begin
+  let p := Paw.Tests.Gallery.at_ rt "link"
+  let rt := (rt.step (.input { kind := .move p, time := 1000 }) 1000).1
+  check "the destination is not shown at once" (!(texts rt).contains "https://github.com")
+  let rt := (rt.advance 2000).1
+  check "but once the pointer has rested on the link" ((texts rt).contains "https://github.com")
+  let linkId := ((rt.tree.findKey? "link").map (·.id)).get!
+  let (rt2, _) := (rt.step (.input { kind := .move ⟨0, 0⟩, time := 2100 }) 2100)
+  let (rt2, _) := rt2.step (.access linkId .focus) 2200
+  check "and while the link has focus" ((texts rt2).contains "https://github.com")
+  let (_, outs) := rt.step (.input { kind := .move p, time := 2300 }) 2300
+  check "the pointer is a hand over a link" (outs.all fun | .request (.cursor c) => c == .pointer | _ => true)
+
+end Paw.Tests.Link

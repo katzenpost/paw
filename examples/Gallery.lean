@@ -133,6 +133,9 @@ instance : BEq Model where
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
+/-- Where the gallery's link goes. -/
+def katzenpost : Option Link := Link.parse? "https://github.com/katzenpost"
+
 /-- A picture made in memory: a sunset of 96 × 48 pixels. -/
 def sunset : IO (Except ImageError Image) :=
   let (w, h) := (96, 48)
@@ -158,7 +161,8 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .remove id => modify fun (m, cs) => ({ m with items := m.items.filter (·.1 != id) }, cs)
   | _, .reverse => modify fun (m, cs) => ({ m with items := m.items.reverse }, cs)
   | .user d, .openLink => do
-    if let some e := Effect.openUri? "link" "https://github.com/katzenpost" then
+    if let some l := katzenpost then
+      let e := Effect.openLink "link" l
       if h : e.DesignatedBy d then
         emit (.effect d e (by decide) h)
         modify fun (m, cs) => ({ m with opened := m.opened + 1 }, cs)
@@ -265,8 +269,9 @@ def basicsPage (m : Model) : Node Msg :=
     Ui.row ([Ui.icon .check, Ui.icon .warning, Ui.icon .chevronRight, Ui.button "Load picture" .loadPicture "load"] ++
       (m.picture.toList.map fun img =>
         Ui.width (px 56) (Ui.height (px 28) (Ui.image img (.text (SafeName.filter "A sunset")) .fill "picture")))),
-    Ui.row [Ui.button "Open link" .openLink "link", Ui.button "Copy name" .copyName "copy",
-      Ui.label s!"links opened: {m.opened}" "opened"],
+    Ui.row ((katzenpost.toList.map fun l => Ui.externalLink (SafeText.trusted "Katzenpost on GitHub") l .openLink "link") ++
+      [Ui.button "Copy name" .copyName "copy",
+      Ui.label s!"links opened: {m.opened}" "opened"]),
     Ui.textArea m.notes .notes { rows := 3, placeholder := SafeText.trusted "notes" } "notes"]
 
 def view (m : Model) : Node Msg :=

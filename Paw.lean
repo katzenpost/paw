@@ -31,5 +31,6 @@ import Paw.Widgets.Input
 import Paw.Widgets.Slider
 import Paw.Widgets.List
 import Paw.Widgets.Split
+import Paw.Widgets.Link
 import Paw.Ui
 import Paw.Linux

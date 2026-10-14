@@ -165,6 +165,8 @@ structure ThemeData where
   border : Color
   /-- What marks input that is not valid. -/
   error : Color
+  /-- Links' text. -/
+  link : Color
   fontSize : Int := px 14
   button : Style
   checkbox : Style
@@ -183,6 +185,7 @@ def controls (t : ThemeData) : List Style := [t.button, t.checkbox, t.textField,
 /-- Every text is readable on what it is drawn on, and every control's edge can be seen. -/
 def readable (t : ThemeData) : Bool :=
   Contrast.readable t.text t.background && Contrast.readable t.text t.surface &&
+  Contrast.readable t.link t.background && Contrast.readable t.link t.surface &&
   Contrast.readable t.muted t.textField.basic.bg && Contrast.readable t.muted t.background &&
   Contrast.distinct t.accent t.checkbox.basic.bg &&
   Contrast.distinct t.error t.textField.basic.bg && Contrast.distinct t.error t.background &&
@@ -222,6 +225,7 @@ def lightData : ThemeData :=
     disabled := { bg := some (gray 0xEB), fg := some (gray 0x5C), border := some (gray 0xC8) } }
   { background := gray 0xF4, surface := Color.white, text := gray 0x20, muted := gray 0x6B,
     accent := Color.rgb 0x2A 0x6F 0xDB, border := gray 0x8A, error := Color.rgb 0xC6 0x28 0x28,
+    link := Color.rgb 0x1A 0x5B 0xC4,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
     textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
     toggle := control .default
@@ -241,6 +245,7 @@ def darkData : ThemeData :=
     disabled := { bg := some (gray 0x26), fg := some (gray 0x9A), border := some (gray 0x40) } }
   { background := gray 0x1E, surface := gray 0x2B, text := gray 0xE6, muted := gray 0xA8,
     accent := Color.rgb 0x6C 0xA0 0xFF, border := gray 0x8A, error := Color.rgb 0xFF 0x6B 0x6B,
+    link := Color.rgb 0x8A 0xB4 0xFF,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
     textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
     toggle := control .default

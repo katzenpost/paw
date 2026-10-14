@@ -57,5 +57,6 @@ def main : IO UInt32 := do
     ("input", Input.tests),
     ("slider", Slider.tests),
     ("list", List.tests),
-    ("split", Split.tests)].mapM fun (n, t) => runSuite n t
+    ("split", Split.tests),
+    ("link", Link.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

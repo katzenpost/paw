@@ -12,6 +12,7 @@ import Paw.Widgets.Overlay
 import Paw.Widgets.Anim
 import Paw.Widgets.Image
 import Paw.Widgets.Choice
+import Paw.Widgets.Input
 
 /-! # Building views
 
@@ -128,6 +129,28 @@ def optionButton {α : Type} [BEq α] (caption : String) (value current : α) (o
 def toggleButton (caption : String) (on : Bool) (onChange : Bool → Msg) (key : Option String := none) :
     Node Msg :=
   Node.leaf (Widgets.toggleButton (SafeText.trusted caption) on onChange) key
+
+/-- A field for a value of any type with a format: the model hears of it only when the text reads
+as a value. -/
+def inputField {α : Type} [BEq α] (fmt : Format α) (value : α) (onChange : α → Msg)
+    (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.inputField fmt value onChange) key
+
+/-- An integer between `lo` and `hi`, typed, or stepped by Up, Down and the wheel. -/
+def numericField {lo hi : Int} (value : { x : Int // lo ≤ x ∧ x ≤ hi })
+    (onChange : { x : Int // lo ≤ x ∧ x ≤ hi } → Msg) (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.numericField value onChange) key
+
+/-- A number with `places` decimal places, in units of `10 ^ -places`, between `lo` and `hi`. -/
+def decimalField {lo hi : Int} (places : Nat) (hp : 1 ≤ places) (value : { x : Int // lo ≤ x ∧ x ≤ hi })
+    (onChange : { x : Int // lo ≤ x ∧ x ≤ hi } → Msg) (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.decimalField places hp value onChange) key
+
+def dateField (value : Format.Date) (onChange : Format.Date → Msg) (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.dateField value onChange) key
+
+def timeField (value : Format.Time) (onChange : Format.Time → Msg) (key : Option String := none) : Node Msg :=
+  Node.leaf (Widgets.timeField value onChange) key
 
 /-- A line across the box, or down it if `vertical`. -/
 def separator (vertical : Bool := false) : Node Msg := Node.leaf (Widgets.separator vertical)

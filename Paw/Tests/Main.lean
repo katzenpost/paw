@@ -24,6 +24,7 @@ import Paw.Tests.Image
 import Paw.Tests.Wrap
 import Paw.Tests.Edit
 import Paw.Tests.Choice
+import Paw.Tests.Input
 
 open Paw.Tests
 
@@ -49,5 +50,6 @@ def main : IO UInt32 := do
     ("image", Image.tests),
     ("wrap", Wrap.tests),
     ("edit", Edit.tests),
-    ("choice", Choice.tests)].mapM fun (n, t) => runSuite n t
+    ("choice", Choice.tests),
+    ("input", Input.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

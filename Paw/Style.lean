@@ -163,6 +163,8 @@ structure ThemeData where
   accent : Color
   /-- Edges of panels and scroll bars. -/
   border : Color
+  /-- What marks input that is not valid. -/
+  error : Color
   fontSize : Int := px 14
   button : Style
   checkbox : Style
@@ -183,6 +185,7 @@ def readable (t : ThemeData) : Bool :=
   Contrast.readable t.text t.background && Contrast.readable t.text t.surface &&
   Contrast.readable t.muted t.textField.basic.bg && Contrast.readable t.muted t.background &&
   Contrast.distinct t.accent t.checkbox.basic.bg &&
+  Contrast.distinct t.error t.textField.basic.bg && Contrast.distinct t.error t.background &&
   t.controls.all fun s =>
     (s.states.all fun st => Contrast.readable st.fg st.bg) &&
     Style.interactions.all fun i => i.disabled || Contrast.distinct (s.current i).border t.background
@@ -218,7 +221,7 @@ def lightData : ThemeData :=
     active := { bg := some (gray 0xE2) }
     disabled := { bg := some (gray 0xEB), fg := some (gray 0x5C), border := some (gray 0xC8) } }
   { background := gray 0xF4, surface := Color.white, text := gray 0x20, muted := gray 0x6B,
-    accent := Color.rgb 0x2A 0x6F 0xDB, border := gray 0x8A,
+    accent := Color.rgb 0x2A 0x6F 0xDB, border := gray 0x8A, error := Color.rgb 0xC6 0x28 0x28,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
     textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
     toggle := control .default
@@ -237,7 +240,7 @@ def darkData : ThemeData :=
     active := { bg := some (gray 0x3A) }
     disabled := { bg := some (gray 0x26), fg := some (gray 0x9A), border := some (gray 0x40) } }
   { background := gray 0x1E, surface := gray 0x2B, text := gray 0xE6, muted := gray 0xA8,
-    accent := Color.rgb 0x6C 0xA0 0xFF, border := gray 0x8A,
+    accent := Color.rgb 0x6C 0xA0 0xFF, border := gray 0x8A, error := Color.rgb 0xFF 0x6B 0x6B,
     button := control .default, checkbox := { control .default with basic.radius := px 3 },
     textField := { control .text with basic.radius := px 3, hover := {}, active := {} }
     toggle := control .default

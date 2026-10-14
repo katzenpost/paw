@@ -21,7 +21,12 @@ open Paw
 inductive Page where
   | basics
   | choices
+  | inputs
   deriving Repr, BEq, Inhabited
+
+abbrev Quantity := { x : Int // 0 ≤ x ∧ x ≤ 99 }
+/-- A price in cents, at most a thousand. -/
+abbrev Price := { x : Int // 0 ≤ x ∧ x ≤ 100000 }
 
 inductive Size where
   | small
@@ -61,6 +66,10 @@ inductive Msg where
   | size (s : Size)
   | align (a : Align)
   | bold (on : Bool)
+  | quantity (q : Quantity)
+  | price (p : Price)
+  | date (d : Format.Date)
+  | time (t : Format.Time)
   | picture (img : Except ImageError Image)
 
 structure Model where
@@ -82,12 +91,17 @@ structure Model where
   size : Size := .medium
   align : Align := .left
   bold : Bool := false
+  quantity : Quantity := ⟨1, by decide⟩
+  price : Price := ⟨1250, by decide⟩
+  date : Format.Date := ⟨2026, 10, 14, by decide⟩
+  time : Format.Time := ⟨9, 30, by decide⟩
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
     a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened &&
     a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark && a.picture == b.picture && a.notes == b.notes && a.page == b.page && a.size == b.size &&
-    a.align == b.align && a.bold == b.bold
+    a.align == b.align && a.bold == b.bold && a.quantity.val == b.quantity.val && a.price.val == b.price.val &&
+    a.date == b.date && a.time == b.time
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite, .io]
 
@@ -142,6 +156,10 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | _, .size x => modify fun (m, cs) => ({ m with size := x }, cs)
   | _, .align a => modify fun (m, cs) => ({ m with align := a }, cs)
   | _, .bold on => modify fun (m, cs) => ({ m with bold := on }, cs)
+  | _, .quantity q => modify fun (m, cs) => ({ m with quantity := q }, cs)
+  | _, .price p => modify fun (m, cs) => ({ m with price := p }, cs)
+  | _, .date d => modify fun (m, cs) => ({ m with date := d }, cs)
+  | _, .time t => modify fun (m, cs) => ({ m with time := t }, cs)
 
 /-- Radio buttons, option buttons, a toggle button and separators. -/
 def choicesPage (m : Model) : Node Msg :=
@@ -155,6 +173,16 @@ def choicesPage (m : Model) : Node Msg :=
       Ui.optionButton "Center" Align.center m.align .align "center",
       Ui.optionButton "Right" Align.right m.align .align "right", Ui.separator (vertical := true),
       Ui.toggleButton "Bold" m.bold .bold "bold"]] (px 8)
+
+/-- Fields for numbers, dates and times, which take only text that reads as one. -/
+def inputsPage (m : Model) : Node Msg :=
+  let field (caption : String) (n : Node Msg) := Ui.row [Ui.width (px 100) (Ui.label caption), Ui.width (px 160) n]
+  Ui.col [
+    field "Quantity" (Ui.numericField m.quantity .quantity "quantity"),
+    field "Price" (Ui.decimalField 2 (by decide) m.price .price "price"),
+    field "Date" (Ui.dateField m.date .date "date"),
+    field "Time" (Ui.timeField m.time .time "time"),
+    Ui.label s!"{m.quantity.val} at {m.price.val / 100}.{m.price.val % 100 / 10}{m.price.val % 10} on {m.date.year}-{m.date.month}-{m.date.day} at {m.time.hour}:{m.time.minute}" "summary"] (px 8)
 
 /-- The first page: what the gallery had before it had tabs. -/
 def basicsPage (m : Model) : Node Msg :=
@@ -183,7 +211,8 @@ def basicsPage (m : Model) : Node Msg :=
 def view (m : Model) : Node Msg :=
   Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
   Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
-    Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m)]] ++
+    Ui.tabs m.page .page [("Basics", .basics, basicsPage m), ("Choices", .choices, choicesPage m),
+      ("Inputs", .inputs, inputsPage m)]] ++
     (m.about.toList.map fun t => Ui.alert t (SafeName.filter "About Paw")
       "A GUI library for Lean, after monomer." .closeAbout) ++
     (m.clearing.toList.map fun t => Ui.confirm t (SafeName.filter "Clear the list?")

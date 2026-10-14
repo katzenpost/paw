@@ -136,27 +136,28 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
       { st with cursor := min st.cursor chars.length, anchor := st.anchor.map (min · chars.length) }
     sizeReq := fun env _ =>
       let (_, h) := env.measure (textStyle env) (SafeText.trusted "M")
-      (SizeReq.minSize (px 120).toNat, SizeReq.fixedSize (h + 2 * padY).toNat)
+      (SizeReq.minSize (px 120).toNat, SizeReq.fixedSize (h + 2 * env.theme.textField.padding.2).toNat)
     render := fun env st v =>
       let t := env.theme
-      let style := textStyle env
+      let s := env.look t.textField
+      let (padX, padY) := t.textField.padding
+      let style := { textStyle env with color := s.fg }
       let e := edit st
       let width (n : Nat) := (env.measure style (SafeText.filter (String.ofList (chars.take n)))).1
       let inner := v.width - 2 * padX
       let caretX := width e.cursor
       let shift := max 0 (caretX - inner + px 2)
       let x0 := v.x0 + padX - shift
-      let (border, bw) := if env.isFocused then (t.accent, px 2) else (t.border, px 1)
-      let shown := if chars.isEmpty then [centeredText env v x0 cfg.placeholder { style with color := t.border }]
+      let shown := if chars.isEmpty then [centeredText env v x0 cfg.placeholder { style with color := t.muted }]
         else [centeredText env v x0 (SafeText.filter value) style]
       let sel := match e.selection with
         | some (lo, hi) => [Draw.fill (Rect.ofXYWH (x0 + width lo) (v.y0 + padY) (width hi - width lo)
             (v.height - 2 * padY)) (Color.rgba t.accent.r t.accent.g t.accent.b 80) 0]
         | none => []
       let caret := if caretShown env st.since then
-          [Draw.fill (Rect.ofXYWH (x0 + caretX) (v.y0 + padY) (px 1) (v.height - 2 * padY)) t.text 0]
+          [Draw.fill (Rect.ofXYWH (x0 + caretX) (v.y0 + padY) (px 1) (v.height - 2 * padY)) s.fg 0]
         else []
-      Scene.inBox v ([.fill v t.surface (px 3), .stroke v border bw (px 3)] ++ sel ++ shown ++ caret)
+      Scene.inBox v (frame v s ++ sel ++ shown ++ caret)
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun env st v ev =>
       let e := edit st
@@ -177,12 +178,13 @@ def textField {Msg : Type} (value : String) (onChange : String → Msg) (cfg : T
         else none
       | .press p .primary =>
         let measure (t : SafeText) := (env.measure (textStyle env) t).1
-        result (e.moveTo (indexAt measure chars (p.x - v.x0 - padX)) false)
+        result (e.moveTo (indexAt measure chars (p.x - v.x0 - env.theme.textField.padding.1)) false)
       | .focus => some ({ st with since := env.now }, [])
       | .tick _ | .blur | .enter _ | .leave _ => some (st, [])
       | _ => none
     focusable := true
     every := some fun env _ => if env.isFocused && env.windowFocused then some blinkMs else none
+    cursor := fun env _ => (env.look env.theme.textField).cursor
     access := fun _ _ =>
       some { role := .textInput, name := cfg.placeholder, value := some (SafeText.filter value) } }
 
@@ -193,12 +195,11 @@ def passwordField {Msg : Type} (value : Secret) (onChange : Secret → Msg) : Wi
     init := {}
     sizeReq := fun env _ =>
       let (_, h) := env.measure (textStyle env) (SafeText.trusted "M")
-      (SizeReq.minSize (px 120).toNat, SizeReq.fixedSize (h + 2 * padY).toNat)
+      (SizeReq.minSize (px 120).toNat, SizeReq.fixedSize (h + 2 * env.theme.textField.padding.2).toNat)
     render := fun env _ v =>
-      let t := env.theme
-      let (border, bw) := if env.isFocused then (t.accent, px 2) else (t.border, px 1)
-      Scene.inBox v [.fill v t.surface (px 3), .stroke v border bw (px 3),
-        centeredText env v (v.x0 + padX) value.dots (textStyle env)]
+      let s := env.look env.theme.textField
+      Scene.inBox v (frame v s ++ [centeredText env v (v.x0 + env.theme.textField.padding.1) value.dots
+        { textStyle env with color := s.fg }])
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun _ st _ e => match e with
       | .text s | .paste s =>
@@ -208,6 +209,7 @@ def passwordField {Msg : Type} (value : Secret) (onChange : Secret → Msg) : Wi
       | .focus | .blur | .enter _ | .leave _ => some (st, [])
       | _ => none
     focusable := true
+    cursor := fun env _ => (env.look env.theme.textField).cursor
     access := fun _ _ => some { role := .passwordInput } }
 
 end Paw.Widgets

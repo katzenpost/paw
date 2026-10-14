@@ -6,6 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 import Paw.Scene
 import Paw.Layout
 import Paw.Event
+import Paw.Style
 
 /-! # Widgets
 
@@ -27,22 +28,13 @@ structure WidgetId where
   n : Nat
   deriving Repr, DecidableEq, Hashable, Ord, Inhabited
 
-structure Theme where
-  text : Color := Color.rgb 0x20 0x20 0x20
-  background : Color := Color.rgb 0xF4 0xF4 0xF4
-  surface : Color := Color.white
-  accent : Color := Color.rgb 0x2A 0x6F 0xDB
-  border : Color := Color.rgb 0xB0 0xB0 0xB0
-  fontSize : Int := px 14
-  deriving Repr, Inhabited
-
 /-- What widgets know of the world. -/
 structure Env where
   /-- The width and height of a line of text, from the Rust layer or a mock. -/
   measure : TextStyle → SafeText → Int × Int
   /-- Milliseconds since the app started. -/
   now : Nat := 0
-  theme : Theme := {}
+  theme : Theme := Theme.light
   focused : Option WidgetId := none
   hovered : Option WidgetId := none
   pressed : Option WidgetId := none
@@ -52,6 +44,8 @@ structure Env where
   content : Rect := default
   /-- The window, which overlays are placed within. -/
   window : Rect := default
+  /-- The widget being asked is enabled, which the tree sets. -/
+  enabled : Bool := true
   /-- The window has keyboard focus. -/
   windowFocused : Bool := true
   /-- Animations run; false when the user asked for reduced motion, and they jump to their end. -/
@@ -65,6 +59,13 @@ namespace Env
 def isFocused (env : Env) : Bool := env.focused == some env.self
 def isHovered (env : Env) : Bool := env.hovered == some env.self
 def isPressed (env : Env) : Bool := env.pressed == some env.self
+
+/-- The widget being asked, as styles see it. -/
+def interaction (env : Env) : Interaction :=
+  { hovered := env.isHovered, focused := env.isFocused, active := env.isPressed, disabled := !env.enabled }
+
+/-- How the widget being asked looks now, by `s`. -/
+def look (env : Env) (s : Style) : StyleState := s.current env.interaction
 
 end Env
 
@@ -147,6 +148,8 @@ structure Widget (Msg : Type) where
   /-- How a container changes its children's drawing, before the tree clips it to the box: a
   fade lowers its alpha. -/
   mapChildren : Env → Dynamic → Scene → Scene
+  /-- The pointer's shape over it. -/
+  cursor : Env → Dynamic → Cursor
 
 /-- A widget over its own state type `σ`. -/
 structure Widget.Spec (Msg σ : Type) where
@@ -164,6 +167,7 @@ structure Widget.Spec (Msg σ : Type) where
   every : Option (Env → σ → Option Nat) := none
   moving : Option (Env → σ → Bool) := none
   mapChildren : Env → σ → Scene → Scene := fun _ _ s => s
+  cursor : Env → σ → Cursor := fun _ _ => .default
 
 namespace Widget.Spec
 
@@ -188,6 +192,7 @@ def build (s : Widget.Spec Msg σ) : Widget Msg where
   every := s.every.map fun f env d => f env (s.state d)
   moving := s.moving.map fun f env d => f env (s.state d)
   mapChildren := fun env d => s.mapChildren env (s.state d)
+  cursor := fun env d => s.cursor env (s.state d)
 
 end Widget.Spec
 
@@ -208,6 +213,7 @@ def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β whe
   every := w.every
   moving := w.moving
   mapChildren := w.mapChildren
+  cursor := w.cursor
 
 /-- A widget that only holds children: it draws nothing and asks for nothing itself. -/
 def Widget.container {Msg : Type} (kind : String) : Widget Msg :=

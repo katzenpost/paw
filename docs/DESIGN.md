@@ -107,6 +107,7 @@ Layout needs one call into Rust: measuring shaped text. It is declared `@[extern
 | A scroll places its child past its own box | The child is laid out in a content rectangle the scroll names, and drawn clipped to the scroll's box | `assign_within` holds relative to the content rectangle; the clip law is unchanged |
 | Shrinking flexible sizes in one pass, clamped at zero, so a child weighted to give up more than it has leaves the rest overflowing | Shrinking in rounds: what one child cannot give, the others give next round | Children fit whenever their rigid sizes do; a random test checks it |
 | A widget opens an overlay with the `SetOverlay` request and closes it with `ResetOverlay` | An overlay is a node of the view, marked with `Node.overlay`; it is open while the view has it | One direction for data to flow: the model says what is open |
+| A theme is any record of colors and styles | A `Theme` carries `contrast_ok` and `focus_visible`, decided when it is written | Text is readable and focus can be seen in every state of every control; an unreadable theme does not compile |
 | `RenderEvery` and `RenderStop` requests start and stop a widget's timer, and while any runs, the loop draws 60 frames a second | A widget declares `every`, how often it wants `Event.tick`, as a function of its state; the loop sleeps until the next tick is due | A widget that leaves the tree or changes state stops ticking with nothing to undo; an idle app uses no CPU |
 | `alert` and `confirm` can be opened by any message, and their accept button acts on any click | A modal opens only with a `Modal` token made from the designation of the input being handled; `confirm`'s accept button acts only on a designated click | Dialogs come only from the user's actions, and ignore input until they are stable (guidelines, Input) |
 
@@ -223,6 +224,7 @@ The full `Widget` record also has monomer's merge, event and dispose functions. 
 | `Router` | `overlay_hit`: while an overlay is open, the pointer reaches only widgets in it; `press_outside`: a press outside it reaches nothing else | The user clicks what they see; a popup cannot steer a click to what it covers |
 | `Node` | `overlays_within`: overlays draw within the window; `Overlay.place_within` | Content cannot set its own position |
 | `Runtime` | `now_le_nextDeadline`: the loop never waits for a deadline already past | Timers fire when due |
+| `Theme` | `contrast_ok`: all text at least 4.5:1 on what it is drawn on, in every state; control edges 3:1; `focus_visible`: a focus ring 2 pixels wide, 3:1 against the window | Focus is the user's, and the user can see where it is; text is readable |
 | `Node` | keys unique among siblings, by `dedupKeys_nodup` | State is never handed to another widget |
 
 Widgets draw with `Scene.inBox v ds`, every item clipped to the box `v`, and `Scene.inBox_within` is their `render_within`.
@@ -277,6 +279,22 @@ def Modal.open (d : Designation) : Modal := ⟨d.serial, d.time⟩
 So an app can open one only in `update` at origin `user d`. A `Modal` can still be kept in the model and used later, as on a task's result, so the router also checks freshness. A modal may first appear only while the router handles the input whose designation made its token. Any other modal is refused: it is never drawn, input and assistive technology never reach it, and it is sent `dismiss` so that the app's model closes it.
 
 A dialog's own buttons follow the same rule. `confirm`'s accept button sends its message with `Req.choose`, which the runtime passes to `update` only when the input designated the button. So a click within `stableMs` of the dialog appearing, a synthetic click or a press from a screen reader cannot confirm. Escape, Enter and the cancel button take the safe choice.
+
+### Styles and themes
+
+A control's look comes from a `Style` for its kind: a basic `StyleState` (background, text color, border, its width, radius, pointer shape), and what hover, focus, focus with hover, press and being disabled change in it. `Style.current` picks the state with monomer's priority, disabled first, then pressed, focus with hover, hover and focus, each laid over the basic look. A `Theme` holds a style for each kind of control and the window's colors, and two laws:
+
+```lean
+structure Theme extends ThemeData where
+  contrast_ok : toThemeData.readable = true
+  focus_visible : toThemeData.focusVisible = true
+```
+
+`readable` checks every text against what it is drawn on, in all sixteen combinations of states, by WCAG's measure: a contrast ratio of at least 4.5:1, with both colors opaque. It checks the window's text on the window and on panels, placeholders, and each control's text on its own background; and that each enabled control's border has 3:1 against the window, so the control's edge can be seen. `focusVisible` checks that each control's focused border differs from its unfocused one, is at least 2 pixels wide, and has 3:1 against the window.
+
+The ratio needs relative luminance, which is defined with real numbers. Paw computes it exactly instead: a table holds each sRGB channel value's linear light in ten-millionths, luminance is a weighted sum of three entries, and the ratio (L₁ + 0.05) / (L₂ + 0.05) is compared with the threshold by cross-multiplying natural numbers. So `decide` checks a theme as it is written, and a theme with unreadable text or an invisible focus ring does not compile; `Tests/Rejects.lean` pins the error for each. Rounding in the table moves a ratio by far less than the threshold's precision.
+
+`Ui.themed theme child` gives a subtree a theme of its own, on that theme's background. The tree passes the nearest theme down as it measures, places, draws and delivers, and an overlay drawn apart from the tree takes the theme of its ancestors, so a popup in a dark part of the window is dark too. `PAW_THEME=dark` picks the theme the app starts with. A disabled node (`Ui.enabled false`) takes no input or focus and is drawn in its style's disabled look. The pointer takes the shape the widget under it names, such as the text cursor over a field, and the platform is asked only when that changes.
 
 ### Authority and origin
 

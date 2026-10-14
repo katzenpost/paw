@@ -19,6 +19,7 @@ import Paw.Tests.Gallery
 import Paw.Tests.Linux
 import Paw.Tests.Overlay
 import Paw.Tests.Time
+import Paw.Tests.Style
 
 open Paw.Tests
 
@@ -39,5 +40,6 @@ def main : IO UInt32 := do
     ("gallery", Gallery.tests),
     ("linux", Linux.tests),
     ("overlay", Overlay.tests),
-    ("time", Time.tests)].mapM fun (n, t) => runSuite n t
+    ("time", Time.tests),
+    ("style", Style.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

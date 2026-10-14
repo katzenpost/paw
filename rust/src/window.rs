@@ -317,6 +317,19 @@ pub fn request(r: Request) {
                 app.window = None;
                 app.surface = None;
             }
+            Request::Cursor(c) => {
+                use winit::window::CursorIcon;
+                let icon = match c {
+                    1 => CursorIcon::Pointer,
+                    2 => CursorIcon::Text,
+                    3 => CursorIcon::EwResize,
+                    4 => CursorIcon::NsResize,
+                    _ => CursorIcon::Default,
+                };
+                if let Some(w) = &app.window {
+                    w.set_cursor(icon);
+                }
+            }
             Request::Access(focus, nodes) => {
                 let tree = crate::access::update(focus, &nodes, app.scale(), &app.title);
                 app.access = Some(tree.clone());

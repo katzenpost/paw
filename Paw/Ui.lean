@@ -97,6 +97,14 @@ def popup (isOpen : Bool) (anchor content : Node Msg) (onDismiss : Msg) (key : O
   let pop := Node.containerWith (popupWidget onDismiss) (padLayout (px 4)) [content]
   Node.container (box { expand := true }) (anchor :: if isOpen then [pop.overlay .popup] else []) key
 
+/-- `child` and everything in it drawn with `theme`, on the theme's background: how a part of the
+window, or all of it, switches theme. -/
+def themed (theme : Theme) (child : Node Msg) : Node Msg :=
+  (Node.containerWith backdrop (box { expand := true }) [child]).withInfo ({ · with theme := some theme })
+
+/-- `child`, enabled only if `on`: a disabled widget takes no input or focus, and looks it. -/
+def enabled (on : Bool) (child : Node Msg) : Node Msg := if on then child else child.disable
+
 /-- `child` with `tip` shown below it once the pointer has rested on it for a second, or while
 focus is in it. The tip takes no input. -/
 def tooltip (tip : String) (child : Node Msg) : Node Msg :=

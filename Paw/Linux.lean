@@ -148,6 +148,8 @@ def requestEnc : Request → Option (List UInt8)
   | .notify t b => some (nat.enc 3 ++ string.enc t.text ++ string.enc b.text)
   | .quit => some (nat.enc 4)
   | .access focus nodes => some (nat.enc 5 ++ nat.enc focus ++ nat.enc nodes.length ++ nodes.flatMap accessNodeEnc)
+  | .cursor c => some (nat.enc 6 ++ nat.enc (match c with
+    | .default => 0 | .pointer => 1 | .text => 2 | .resizeH => 3 | .resizeV => 4))
 
 /-- Text measured by the Rust layer, with the fonts it draws with. -/
 def measure (style : TextStyle) (t : SafeText) : Int × Int :=
@@ -182,7 +184,8 @@ def layoutReport {Msg : Type} (tree : Node Msg) : String :=
     s!"{k} {r.x0 / unitsPerPx} {r.y0 / unitsPerPx} {r.x1 / unitsPerPx} {r.y1 / unitsPerPx}"
 
 /-- Opens a window of `w` × `h` logical pixels and runs `app` in it until it quits or the window
-closes. `PAW_REDUCE_MOTION=1` asks for reduced motion: animations jump to their end. Two hooks are
+closes. `PAW_REDUCE_MOTION=1` asks for reduced motion: animations jump to their end, and
+`PAW_THEME=dark` for the dark theme. Two hooks are
 for tests that drive the window from outside: if `PAW_TEST_LOG` names a
 file, `describe` of the model is appended to it after each step; if `PAW_TEST_LAYOUT` names one,
 it always holds `layoutReport` of the tree on screen. -/
@@ -203,6 +206,7 @@ def run {caps : List Cap} (app : App caps) (title : String := "Paw") (w h : Nat 
         IO.FS.rename (path ++ ".tmp") path
         last.set report
   let motion := (← IO.getEnv "PAW_REDUCE_MOTION") != some "1"
-  Runtime.run app { platform with motion } onStep
+  let theme := if (← IO.getEnv "PAW_THEME") == some "dark" then Theme.dark else Theme.light
+  Runtime.run app { platform with motion, theme } onStep
 
 end Paw.Linux

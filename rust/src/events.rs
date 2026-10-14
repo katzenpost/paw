@@ -217,6 +217,8 @@ pub enum Request {
     Quit,
     /// The accessibility tree and the focused node, 0 for none.
     Access(u64, Vec<AccessNode>),
+    /// The pointer's shape: 0 default, 1 pointer, 2 text, 3 horizontal resize, 4 vertical resize.
+    Cursor(u64),
 }
 
 fn access_node(r: &mut Reader) -> Option<AccessNode> {
@@ -278,6 +280,10 @@ impl Request {
                 }
                 Request::Access(focus, nodes)
             }
+            6 => match r.nat()? {
+                c @ 0..=4 => Request::Cursor(c),
+                _ => return None,
+            },
             _ => return None,
         };
         r.is_empty().then_some(req)
@@ -311,6 +317,10 @@ impl Request {
                 for n in nodes {
                     put_access_node(&mut w, n);
                 }
+            }
+            Request::Cursor(c) => {
+                w.nat(6);
+                w.nat(*c);
             }
         }
         w.bytes
@@ -351,6 +361,7 @@ mod tests {
             Request::OpenUri("https://example.org".into()),
             Request::Notify("a".into(), "b".into()),
             Request::Quit,
+            Request::Cursor(2),
             Request::Access(
                 2,
                 vec![AccessNode {

@@ -8,23 +8,22 @@ import Paw.Widget
 /-! # Labels, buttons and checkboxes
 
 Each widget draws with `Scene.inBox`, every item clipped to its box, so its law is
-`Scene.inBox_within`. Text is `SafeText`: the app's own strings through `SafeText.trusted`, text
+`Scene.inBox_within`. Controls look as the theme's style for their kind says, in the state they
+are in. Text is `SafeText`: the app's own strings through `SafeText.trusted`, text
 from elsewhere through `SafeText.filter`. -/
 
 namespace Paw.Widgets
 
 open SizeReq
 
-/-- Horizontal and vertical padding inside buttons and fields. -/
-def padX : Int := px 8
-def padY : Int := px 4
+/-- The space between a checkbox and its caption. -/
+def captionGap : Int := px 8
 
 def textStyle (env : Env) : TextStyle := { size := env.theme.fontSize, color := env.theme.text }
 
-/-- A color `k`/16 of the way to black. -/
-def Color.darken (c : Color) (k : Nat) : Color :=
-  let f (x : UInt8) := UInt8.ofNat (x.toNat * (16 - min k 16) / 16)
-  ⟨f c.r, f c.g, f c.b, c.a⟩
+/-- A control's box drawn as `s` says: its background, then its border. -/
+def frame (v : Rect) (s : StyleState) : List Draw :=
+  [.fill v s.bg s.radius, .stroke v s.border s.borderWidth s.radius]
 
 /-- Text vertically centered in `v`, starting at `x`. -/
 def centeredText (env : Env) (v : Rect) (x : Int) (t : SafeText) (style : TextStyle) : Draw :=
@@ -75,15 +74,13 @@ def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool 
     init := {}
     sizeReq := fun env _ =>
       let (w, h) := env.measure (textStyle env) caption
+      let (padX, padY) := env.theme.button.padding
       (fixedSize (w + 2 * padX).toNat, fixedSize (h + 2 * padY).toNat)
     render := fun env _ v =>
-      let t := env.theme
-      let bg := if env.isPressed then Color.darken t.surface 3
-        else if env.isHovered then Color.darken t.surface 1 else t.surface
-      let (border, width) := if env.isFocused then (t.accent, px 2) else (t.border, px 1)
-      let (w, _) := env.measure (textStyle env) caption
-      Scene.inBox v [.fill v bg (px 4), .stroke v border width (px 4),
-        centeredText env v (v.x0 + (v.width - w) / 2) caption (textStyle env)]
+      let s := env.look env.theme.button
+      let style := { textStyle env with color := s.fg }
+      let (w, _) := env.measure style caption
+      Scene.inBox v (frame v s ++ [centeredText env v (v.x0 + (v.width - w) / 2) caption style])
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun _ st _ e => match e with
       | .click .. => some (st, [act])
@@ -91,6 +88,7 @@ def button {Msg : Type} (caption : SafeText) (onClick : Msg) (designated : Bool 
       | .enter _ | .leave _ | .press .. | .release .. | .focus | .blur => some (st, [])
       | _ => none
     focusable := true
+    cursor := fun env _ => (env.look env.theme.button).cursor
     access := fun _ _ => some { role := .button, name := caption } }
 
 /-- A checkbox showing `value`, which emits `onChange` with the other value when toggled. -/
@@ -101,23 +99,36 @@ def checkbox {Msg : Type} (caption : SafeText) (value : Bool) (onChange : Bool �
     init := {}
     sizeReq := fun env _ =>
       let (w, h) := env.measure (textStyle env) caption
-      (fixedSize (h + padX + w).toNat, fixedSize h.toNat)
+      (fixedSize (h + captionGap + w).toNat, fixedSize h.toNat)
     render := fun env _ v =>
       let t := env.theme
-      let side := v.height
-      let boxR := Rect.ofXYWH v.x0 v.y0 side side
+      let s := env.look t.checkbox
+      -- The box is as tall as a line of the caption, centered in whatever height it is given.
+      let side := min (env.measure (textStyle env) caption).2 v.height
+      let boxR := Rect.ofXYWH v.x0 (v.y0 + (v.height - side) / 2) side side
       let mark := boxR.shrink (side / 4) (side / 4) (side / 4) (side / 4)
-      let (border, width) := if env.isFocused then (t.accent, px 2) else (t.border, px 1)
-      Scene.inBox v ([.fill boxR t.surface (px 3), .stroke boxR border width (px 3)] ++
-        (if value then [.fill mark t.accent (px 2)] else []) ++
-        [centeredText env v (v.x0 + side + padX) caption (textStyle env)])
+      -- The caption is on the window, not in the box: the window's text, or muted when disabled.
+      let caption' := { textStyle env with color := if env.enabled then t.text else t.muted }
+      Scene.inBox v (frame boxR s ++
+        (if value then [.fill mark (if env.enabled then t.accent else s.fg) (px 2)] else []) ++
+        [centeredText env v (v.x0 + side + captionGap) caption caption'])
     render_within := fun _ _ v => Scene.inBox_within v _
     handle := fun _ st _ e => match e with
       | .click .. | .key (.char ' ') _ true => some (st, [.emit (onChange !value)])
       | .enter _ | .leave _ | .focus | .blur => some (st, [])
       | _ => none
     focusable := true
+    cursor := fun env _ => (env.look env.theme.checkbox).cursor
     access := fun _ _ => some { role := .checkBox, name := caption, checked := some value } }
+
+/-- The theme's window background over its box: what holds a subtree with a theme of its own. -/
+def backdrop {Msg : Type} : Widget Msg :=
+  Widget.Spec.build (σ := NoState) {
+    kind := "backdrop"
+    init := {}
+    sizeReq := fun _ _ => ({}, {})
+    render := fun env _ v => Scene.inBox v [.fill v env.theme.background 0]
+    render_within := fun _ _ v => Scene.inBox_within v _ }
 
 /-- Empty space that takes the width left over, and no height: for pushing things apart in a
 row. -/

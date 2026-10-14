@@ -120,6 +120,7 @@ Do not tell users something is final, delivered or secured when the system does 
 
 - Events from elsewhere (an invitation, a key change, a file offer) never open a modal dialog, take keyboard focus or raise the window. They queue as notices the user opens deliberately.
 - Wayland's xdg-activation requires a token from a user action to raise a window. Do not work around it.
+- The user can always see which control has keyboard focus, in every theme and state: a ring that differs from the unfocused look and stands out from the window. Text, including placeholders and disabled controls, stays readable, at a contrast of at least 4.5:1, so nothing the app says is hidden in plain sight.
 - Any dialog the app raises ignores input for a short delay after it appears. Its default button is the safe choice, and Enter or a double click that began before it appeared never confirms a dangerous action.
 - Open a modal dialog only while handling the user's input that asked for it. Permission kept from an earlier action, such as a token saved in the model, must not let a later network result open one.
 - While a popup or menu is open, a press outside it closes it and goes no further. Otherwise a popup that appears just before a click steers that click to whatever it covers, or the click lands on a control the user can no longer see. An event inside a popup that nothing in it handles must not reach the window beneath.

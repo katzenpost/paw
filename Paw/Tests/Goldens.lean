@@ -48,6 +48,9 @@ def click (rt : Runtime GApp) (k : String) (t : Nat) : Runtime GApp :=
 def gallery : Runtime GApp :=
   (Paw.Runtime.start GApp (Rect.ofXYWH 0 0 (px 640) (px 560)) 0 Linux.measure (motion := false)).1
 
+/-- The gallery switched to the dark theme. -/
+def galleryDark : Runtime GApp := click gallery "dark" 1000
+
 /-- The gallery's rows half way through fading in. -/
 def galleryFading : Runtime GApp :=
   let rt := (Paw.Runtime.start GApp (Rect.ofXYWH 0 0 (px 640) (px 560)) 0 Linux.measure).1
@@ -108,12 +111,14 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
   ("popup-open", sceneOf galleryMenu, 640, 560, 1000),
   ("confirm", sceneOf galleryConfirm, 640, 560, 1000),
   ("tooltip", sceneOf galleryTip, 640, 560, 1000),
+  ("gallery-dark", sceneOf galleryDark, 640, 560, 1000),
   ("gallery-fading", sceneOf galleryFading, 640, 560, 1000),
   ("button", draw oneButton 140 50, 140, 50, 1000),
   ("button-hovered", draw oneButton 140 50 { env with hovered := some buttonId }, 140, 50, 1000),
   ("button-pressed", draw oneButton 140 50 { env with hovered := some buttonId, pressed := some buttonId },
     140, 50, 1000),
   ("button-focused", draw oneButton 140 50 { env with focused := some buttonId }, 140, 50, 1000),
+  ("button-disabled", draw (Ui.pad (px 8) (Ui.enabled false (Ui.button "Press me" ()))) 140 50, 140, 50, 1000),
   ("corpus", draw (Ui.col (Text.corpus.map fun (_, p) => Ui.text (SafeText.filter p))) 420 420, 420, 420, 1000)]
 
 /-- One corpus text in the middle of three equal cells, between two swatches. -/

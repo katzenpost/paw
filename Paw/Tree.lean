@@ -82,7 +82,15 @@ structure NodeInfo where
   measured : Bool := false
   /-- An overlay: drawn above the tree, given input first, and placed by the window. -/
   overlay : Option Overlay := none
+  /-- The theme for the node and everything below it, in place of its parent's. -/
+  theme : Option Theme := none
   deriving Repr, Inhabited
+
+/-- The environment the node's children see: its theme, if it sets one. -/
+def NodeInfo.inherit (i : NodeInfo) (env : Env) : Env :=
+  match i.theme with
+  | some t => { env with theme := t }
+  | none => env
 
 inductive Node (Msg : Type) where
   | private mk (w : Widget Msg) (st : Dynamic) (info : NodeInfo) (layout : Option Layout)
@@ -120,7 +128,8 @@ def visible (n : Node Msg) : Bool := n.info.visible
 def viewport (n : Node Msg) : Rect := n.info.viewport
 
 /-- The environment as the widget at `i` sees it. -/
-def envAt (env : Env) (i : NodeInfo) : Env := { env with self := i.id, content := i.content }
+def envAt (env : Env) (i : NodeInfo) : Env :=
+  { i.inherit env with self := i.id, content := i.content, enabled := i.enabled }
 def enabled (n : Node Msg) : Bool := n.info.enabled
 def kind (n : Node Msg) : String := n.widget.kind
 
@@ -363,7 +372,7 @@ mutual
 /-- What the node asks for: a leaf's widget decides, a container's layout. -/
 def sizeReq (env : Env) : Node Msg → SizeReq × SizeReq
   | mk w st i none _ => w.sizeReq (envAt env i) st
-  | mk _ _ _ (some l) cs => l.sizeReq (itemList env cs)
+  | mk _ _ i (some l) cs => l.sizeReq (itemList (i.inherit env) cs)
   | deferred .. => ({}, {})
 
 def itemList (env : Env) : List (Node Msg) → List Item
@@ -385,7 +394,7 @@ def measure (env : Env) : Node Msg → Node Msg
   | n@(mk w st i (some l) cs) =>
     if i.measured then n
     else
-      let cs := measureList env cs
+      let cs := measureList (i.inherit env) cs
       mk w st { i with req := l.sizeReq (keptItems cs), measured := true } (some l) cs
   | n@(deferred ..) => n
 
@@ -401,7 +410,7 @@ def place (env : Env) : Node Msg → Rect → Node Msg
   | mk w st i (some l) cs, v =>
     let items := keptItems cs
     let content := w.content (envAt env i) st v i.req
-    mk w st { i with viewport := v, content } (some l) (placeList env v cs (l.assign content items))
+    mk w st { i with viewport := v, content } (some l) (placeList (i.inherit env) v cs (l.assign content items))
   | deferred i a s b, v => deferred { i with viewport := v, content := v } a s b
 
 /-- Children placed where their layout puts them, and overlays where `Overlay.place` puts them for
@@ -428,7 +437,7 @@ def renderIn (env : Env) (seen : Rect) : Node Msg → Scene
   | mk w st i _ cs =>
     if i.visible then
       w.render (envAt env i) st i.viewport ++
-        (w.mapChildren (envAt env i) st (renderList env (i.viewport.inter seen) cs)).clip i.viewport
+        (w.mapChildren (envAt env i) st (renderList (i.inherit env) (i.viewport.inter seen) cs)).clip i.viewport
     else Scene.empty
   | deferred .. => Scene.empty
 
@@ -470,12 +479,13 @@ end
 /-- The open overlays, bottom first. -/
 def overlays (n : Node Msg) : List (Node Msg) := n.overlaysIn
 
-/-- What the overlays `os` draw, bottom first, within the window `win`. -/
-def renderOverlays (env : Env) (win : Rect) (os : List (Node Msg)) : Scene :=
-  (Scene.ofList (os.flatMap fun o => (o.render env).items)).clip win
+/-- What the overlays `os` draw, each in the environment given with it, bottom first, within the
+window `win`. -/
+def renderOverlays (win : Rect) (os : List (Env × Node Msg)) : Scene :=
+  (Scene.ofList (os.flatMap fun (env, o) => (o.render env).items)).clip win
 
-theorem overlays_within (env : Env) (win : Rect) (os : List (Node Msg)) :
-    (renderOverlays env win os).Within win :=
+theorem overlays_within (win : Rect) (os : List (Env × Node Msg)) :
+    (renderOverlays win os).Within win :=
   Scene.clip_within win _
 
 mutual
@@ -522,7 +532,7 @@ def handleAt (env : Env) (id : WidgetId) (e : Event) : Node Msg → Node Msg × 
       | some (st', reqs) => (mk w st' { i with measured := false } l cs, some reqs)
       | none => (mk w st i l cs, none)
     else
-      let (cs', reqs) := handleList env id e cs
+      let (cs', reqs) := handleList (i.inherit env) id e cs
       (mk w st { i with measured := reqs.isNone && i.measured } l cs', reqs)
   | n@(deferred ..) => (n, none)
 
@@ -549,12 +559,26 @@ def bubbleIn (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Ms
     | k :: rest =>
       match cs[k]? with
       | some c =>
-        match bubbleIn env e rest c with
+        match bubbleIn (i.inherit env) e rest c with
         | (some (c', reqs), f) => (some (mk w st { i with measured := false } l (cs.set k c'), reqs), f)
         | (none, true) => (none, true)
         | (none, false) => own cs
       | none => (none, false)
   | _, deferred .. => (none, false)
+
+/-- The environment the node at `path` sees from its ancestors: the nearest theme any of them
+sets. -/
+def envAlong (env : Env) : List Nat → Node Msg → Env
+  | [], _ => env
+  | k :: ks, mk _ _ i _ cs => match cs[k]? with
+    | some c => envAlong (i.inherit env) ks c
+    | none => env
+  | _, deferred .. => env
+
+/-- The pointer's shape over the node. -/
+def cursor (env : Env) : Node Msg → Cursor
+  | mk w st i .. => w.cursor (envAt env i) st
+  | deferred .. => .default
 
 /-- `e` to the node at `path` alone: the tree with its new state and its requests, or `none` if
 it did not handle it. -/
@@ -564,7 +588,7 @@ def handleIn (env : Env) (e : Event) : List Nat → Node Msg → Option (Node Ms
       (mk w st' { i with measured := false } l cs, reqs)
   | k :: rest, mk w st i l cs =>
     match cs[k]? with
-    | some c => (handleIn env e rest c).map fun (c', reqs) =>
+    | some c => (handleIn (i.inherit env) e rest c).map fun (c', reqs) =>
         (mk w st { i with measured := false } l (cs.set k c'), reqs)
     | none => none
   | _, deferred .. => none
@@ -749,7 +773,7 @@ def indexInto (env : Env) (win clip : Rect) (path : Array Nat) (moving : Bool) (
                    tickers := match w.every.bind fun f => f (envAt env i) st with
                      | some ms => acc.tickers.push (i.id, ms)
                      | none => acc.tickers }
-      indexList env win seen path moving 0 acc cs
+      indexList (i.inherit env) win seen path moving 0 acc cs
     else acc
   | deferred .. => acc
 
@@ -786,10 +810,10 @@ def accessFrom (env : Env) (hide : WidgetId → Bool) : Node Msg → Array Acces
     if !i.visible || hide i.id then (acc, [])
     else match w.access (envAt env i) st with
       | some a =>
-        let (acc, kids) := accessList env hide cs acc
+        let (acc, kids) := accessList (i.inherit env) hide cs acc
         (acc.push { id := i.id.n, access := a, bounds := i.viewport, focusable := n.focusable,
                     disabled := !i.enabled, children := kids }, [i.id.n])
-      | none => accessList env hide cs acc
+      | none => accessList (i.inherit env) hide cs acc
   | deferred .., acc => (acc, [])
 
 def accessList (env : Env) (hide : WidgetId → Bool) : List (Node Msg) → Array AccessNode → Array AccessNode × List Nat

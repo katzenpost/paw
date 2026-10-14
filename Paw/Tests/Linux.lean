@@ -53,6 +53,7 @@ def tests : TestM Unit := do
   check "a link" (echoes (.openUri "https://example.org"))
   check "a notification" (echoes (.notify (SafeName.filter "a") (SafeText.filter "b")))
   check "quit" (echoes .quit)
+  check "the pointer's shape" ([Cursor.default, .pointer, .text, .resizeH, .resizeV].all (echoes ∘ .cursor))
   let field : Access := { role := .textInput, name := SafeText.trusted "name", value := some (SafeText.trusted "Ada") }
   let box : Access := { role := .checkBox, checked := some true }
   let pw : Access := { role := .passwordInput, value := some (SafeText.trusted "pw") }

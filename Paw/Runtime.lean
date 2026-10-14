@@ -52,6 +52,8 @@ inductive WindowEvent where
 
 /-- What the platform is asked to do. -/
 inductive Request where
+  /-- The pointer's shape over the window. -/
+  | cursor (c : Cursor)
   | present (s : Scene)
   | setTitle (t : SafeName)
   | setClipboard (t : SafeText)
@@ -87,7 +89,9 @@ structure Runtime {caps : List Cap} (app : App caps) where
   window : Rect
   now : Nat
   measure : TextStyle → SafeText → Int × Int
-  theme : Theme := {}
+  theme : Theme := Theme.light
+  /-- The pointer's shape the platform was last asked for. -/
+  cursor : Cursor := .default
   quit : Bool := false
   /-- `update` has run since the last settle, so the model may have changed. -/
   updated : Bool := false
@@ -120,7 +124,8 @@ def visibleOverlays (rt : Runtime app) : List (WidgetId × List Nat) :=
 
 /-- What the overlays to draw now draw, bottom first. -/
 def overlayScene (rt : Runtime app) : Scene :=
-  Node.renderOverlays rt.env rt.window (rt.visibleOverlays.filterMap fun (_, p) => rt.tree.get? p)
+  Node.renderOverlays rt.window (rt.visibleOverlays.filterMap fun (_, p) =>
+    (rt.tree.get? p).map (rt.tree.envAlong rt.env p, ·))
 
 /-- The window's background, then the tree, then its open overlays. -/
 def present (rt : Runtime app) : Output app.Msg :=
@@ -213,11 +218,19 @@ def settle (before : app.Model) (changed : Bool) (rt : Runtime app) (outs : List
 
 /-- The runtime for `app` in a window of `window`, at `now`, and its first scene. -/
 def start (app : App caps) (window : Rect) (now : Nat)
-    (measure : TextStyle → SafeText → Int × Int) (motion : Bool := true) : Runtime app × List (Output app.Msg) :=
+    (measure : TextStyle → SafeText → Int × Int) (motion : Bool := true) (theme : Theme := Theme.light) :
+    Runtime app × List (Output app.Msg) :=
   let (tree, nextId) := ((app.view app.init).resolve none).init 1
-  let rt : Runtime app := { model := app.init, tree, nextId, router := {}, window, now, measure, motion }
+  let rt : Runtime app := { model := app.init, tree, nextId, router := {}, window, now, measure, motion, theme }
   let rt := rt.layout
   (rt, rt.frame)
+
+/-- The platform asked for the pointer's shape over the widget under it, if that changed. -/
+def pointCursor (rt : Runtime app) (outs : List (Output app.Msg)) : Runtime app × List (Output app.Msg) :=
+  let c := match rt.router.hovered.bind (rt.router.paths[·]?) with
+    | some p => ((rt.tree.get? p).map (·.cursor (rt.tree.envAlong rt.env p))).getD .default
+    | none => .default
+  if c == rt.cursor then (rt, outs) else ({ rt with cursor := c }, outs ++ [.request (.cursor c)])
 
 /-- Input from the platform: routed, delivered, and settled. -/
 def stepInput (rt : Runtime app) (i : Input) : Runtime app × List (Output app.Msg) :=
@@ -228,7 +241,8 @@ def stepInput (rt : Runtime app) (i : Input) : Runtime app × List (Output app.M
   let (rt, outs, handled) := ds.foldl
     (fun (rt, outs, h) d => let (rt, o, h') := rt.deliver d; (rt, outs ++ o, h || h'))
     ({ rt with router }, [], false)
-  rt.settle before (moved || handled) outs (access := focusMoved || handled)
+  let (rt, outs) := rt.settle before (moved || handled) outs (access := focusMoved || handled)
+  rt.pointCursor outs
 
 /-- One event from the window. -/
 def step (rt : Runtime app) (ev : WindowEvent) (now : Nat) : Runtime app × List (Output app.Msg) :=
@@ -325,6 +339,8 @@ structure Platform where
   perform : Request → IO Unit
   /-- Animations run; false when the user asked for reduced motion. -/
   motion : Bool := true
+  /-- The theme the user chose. -/
+  theme : Theme := Theme.light
 
 namespace Runtime
 
@@ -353,7 +369,7 @@ each poll. The loop sleeps in the platform's poll until an event or the next dea
 partial def run (app : App caps) (p : Platform) (onStep : Runtime app → IO Unit := fun _ => pure ()) :
     IO Unit := do
   let (w, h) ← p.size
-  let (rt, outs) := start app (Rect.ofXYWH 0 0 w h) (← p.now) p.measure p.motion
+  let (rt, outs) := start app (Rect.ofXYWH 0 0 w h) (← p.now) p.measure p.motion p.theme
   loop rt (← carryOut p outs)
 where
   loop (rt : Runtime app) (tasks : Array (Task (Except IO.Error app.Msg))) : IO Unit := do

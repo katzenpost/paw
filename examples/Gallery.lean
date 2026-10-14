@@ -10,7 +10,8 @@ import Paw
 Every widget Paw has, in one window: a counter, a form with a password, a checkbox, a list whose
 rows keep their state as it changes, a scrolled text, two effects that need the user's choice:
 opening a link and copying, a menu in a popup that opens an alert and a confirmation, a tooltip,
-and rows that fade in. -/
+rows that fade in, a button disabled until it has something to do, and a switch to the dark
+theme. -/
 
 namespace Gallery
 
@@ -35,6 +36,7 @@ inductive Msg where
   | askClear
   | clear
   | keep
+  | dark (on : Bool)
 
 structure Model where
   count : Int := 0
@@ -48,11 +50,12 @@ structure Model where
   menu : Bool := false
   about : Option Modal := none
   clearing : Option Modal := none
+  dark : Bool := false
 
 instance : BEq Model where
   beq a b := a.count == b.count && a.name == b.name && a.pass.eq b.pass && a.agree == b.agree &&
     a.draft == b.draft && a.items == b.items && a.nextId == b.nextId && a.opened == b.opened &&
-    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing
+    a.menu == b.menu && a.about == b.about && a.clearing == b.clearing && a.dark == b.dark
 
 abbrev caps : List Cap := [.openUri, .clipboardWrite]
 
@@ -88,11 +91,13 @@ def update : (o : Origin) → Msg → UpdateM Model Msg caps o Unit
   | .other, .askClear => modify fun (m, cs) => ({ m with menu := false }, cs)
   | _, .clear => modify fun (m, cs) => ({ m with items := [], clearing := none }, cs)
   | _, .keep => modify fun (m, cs) => ({ m with clearing := none }, cs)
+  | _, .dark on => modify fun (m, cs) => ({ m with dark := on }, cs)
 
 def view (m : Model) : Node Msg :=
-  Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <| Ui.pad (px 8) <| Ui.col ([
+  Ui.keystroke [({ key := .char 'q', ctrl := true }, .quit)] <|
+  Ui.themed (if m.dark then Theme.dark else Theme.light) <| Ui.pad (px 8) <| Ui.col ([
     Ui.row [Ui.button "−" .dec "dec", Ui.label s!"count: {m.count}" "count", Ui.tooltip "Adds one to the count" (Ui.button "+" .inc "inc"),
-      Ui.spacer,
+      Ui.spacer, Ui.checkbox "Dark" m.dark .dark "dark",
       Ui.popup m.menu (Ui.button "More" (.menu true) "more")
         (Ui.col [Ui.button "About" .about "about", Ui.button "Clear list" .askClear "clear"])
         (.menu false) "menu"],
@@ -100,7 +105,7 @@ def view (m : Model) : Node Msg :=
     Ui.row [Ui.label "Password", Ui.passwordField m.pass .pass "pass"],
     Ui.checkbox "I agree" m.agree .agree "agree",
     Ui.row [Ui.textField m.draft .draft { placeholder := SafeText.trusted "new item" } "draft",
-      Ui.button "Add" .add "add", Ui.button "Reverse" .reverse "reverse"],
+      Ui.enabled (!m.draft.isEmpty) (Ui.button "Add" .add "add"), Ui.button "Reverse" .reverse "reverse"],
     Ui.list m.items (·.1) fun (id, s) => Ui.fadeIn <|
       Ui.row [Ui.text (SafeText.filter s), Ui.spacer, Ui.button "Remove" (.remove id) s!"remove-{id}"],
     Ui.height (px 120) <| Ui.scroll (Ui.paragraph (String.intercalate "\n" ((List.range 12).map fun i =>

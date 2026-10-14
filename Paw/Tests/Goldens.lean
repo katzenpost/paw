@@ -119,6 +119,11 @@ def goldens : List (String × Scene × Nat × Nat × Nat) := [
     140, 50, 1000),
   ("button-focused", draw oneButton 140 50 { env with focused := some buttonId }, 140, 50, 1000),
   ("button-disabled", draw (Ui.pad (px 8) (Ui.enabled false (Ui.button "Press me" ()))) 140 50, 140, 50, 1000),
+  ("paragraph-wrapped", draw (Ui.pad (px 8) (Ui.col [
+      Ui.paragraph "Paw breaks a paragraph into lines that fit its box, at spaces, and cuts a word too long for any line, such as Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch, by its characters.",
+      Ui.label "A label that is cut short with an ellipsis when it does not fit" (overflow := .ellipsis),
+      Ui.label "A label of at most two lines, wrapped, and cut short with an ellipsis on the second when there is still more" (overflow := .ellipsis) (maxLines := 2)])) 260 260,
+    260, 260, 1000),
   ("corpus", draw (Ui.col (Text.corpus.map fun (_, p) => Ui.text (SafeText.filter p))) 420 420, 420, 420, 1000)]
 
 /-- One corpus text in the middle of three equal cells, between two swatches. -/

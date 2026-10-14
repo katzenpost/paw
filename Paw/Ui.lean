@@ -22,12 +22,21 @@ open Widgets
 
 variable {Msg : Type}
 
-/-- The app's own words. -/
-def label (s : String) (key : Option String := none) : Node Msg :=
-  Node.leaf (Widgets.label (SafeText.trusted s)) key
+/-- The text block for one line: wrapped to more lines up to `maxLines`, the last cut short by
+`overflow`. -/
+def lineCfg (overflow : TextOverflow) (maxLines : Nat) : TextCfg :=
+  { wrap := maxLines > 1, maxLines := some maxLines, overflow }
 
-/-- Text from elsewhere, filtered. -/
-def text (t : SafeText) (key : Option String := none) : Node Msg := Node.leaf (Widgets.label t) key
+/-- The app's own words: one line, or wrapped to up to `maxLines`, cut at the edge or with an
+ellipsis. -/
+def label (s : String) (key : Option String := none) (overflow : TextOverflow := .clip)
+    (maxLines : Nat := 1) : Node Msg :=
+  Node.leaf (Widgets.textBlock [SafeText.trusted s] (lineCfg overflow maxLines)) key
+
+/-- Text from elsewhere, filtered, laid out as `label` lays out the app's. -/
+def text (t : SafeText) (key : Option String := none) (overflow : TextOverflow := .clip)
+    (maxLines : Nat := 1) : Node Msg :=
+  Node.leaf (Widgets.textBlock [t] (lineCfg overflow maxLines)) key
 
 /-- Text from elsewhere, as its filtered lines. -/
 def paragraph (s : String) (key : Option String := none) : Node Msg :=

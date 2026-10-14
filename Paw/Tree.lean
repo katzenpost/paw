@@ -84,6 +84,8 @@ structure NodeInfo where
   overlay : Option Overlay := none
   /-- The theme for the node and everything below it, in place of its parent's. -/
   theme : Option Theme := none
+  /-- The node's height depends on its width: it, or something in flow below it, wraps. -/
+  wraps : Bool := false
   deriving Repr, Inhabited
 
 /-- The environment the node's children see: its theme, if it sets one. -/
@@ -390,12 +392,14 @@ mutual
 /-- The node with every node's size request worked out and kept, bottom up, once each. -/
 def measure (env : Env) : Node Msg → Node Msg
   | n@(mk w st i none cs) =>
-    if i.measured then n else mk w st { i with req := w.sizeReq (envAt env i) st, measured := true } none cs
+    if i.measured then n
+    else mk w st { i with req := w.sizeReq (envAt env i) st, measured := true, wraps := w.heightFor.isSome } none cs
   | n@(mk w st i (some l) cs) =>
     if i.measured then n
     else
       let cs := measureList (i.inherit env) cs
-      mk w st { i with req := l.sizeReq (keptItems cs), measured := true } (some l) cs
+      let wraps := cs.any fun c => c.info.wraps && c.inFlow && c.visible
+      mk w st { i with req := l.sizeReq (keptItems cs), measured := true, wraps } (some l) cs
   | n@(deferred ..) => n
 
 def measureList (env : Env) : List (Node Msg) → List (Node Msg)
@@ -403,14 +407,49 @@ def measureList (env : Env) : List (Node Msg) → List (Node Msg)
   | c :: cs => measure env c :: measureList env cs
 end
 
+/-- As tall as layout ever asks: the height a box has while its children's widths are found. -/
+def tall : Int := 2 ^ 40
+
 mutual
-/-- A measured node placed in `v`, and its children where its layout puts them. -/
+/-- A measured node's height request at width `width`: the one `measure` kept, unless something in
+it wraps, when its widths are worked out and each wrapping child asked its height at its width. -/
+def heightAt (env : Env) : Node Msg → Int → SizeReq
+  | mk w st i none _, width => match w.heightFor with
+    | some f => if i.wraps then f (envAt env i) st width else i.req.2
+    | none => i.req.2
+  | mk w st i (some l) cs, width =>
+    if !i.wraps then i.req.2
+    else
+      let items := keptItems cs
+      let content := w.content (envAt env i) st (Rect.ofXYWH 0 0 width tall) i.req
+      (l.sizeReq (wrapItems (i.inherit env) cs items (l.assign content items))).2
+  | deferred .., _ => ({} : SizeReq)
+
+/-- Children as their layout sees them, with each that wraps asking its height at the width of
+the box in `rects` the layout gave it. -/
+def wrapItems (env : Env) : List (Node Msg) → List Item → List Rect → List Item
+  | c :: cs, it :: its, r :: rs =>
+    (if c.info.wraps && c.inFlow then { it with h := heightAt env c r.width } else it) ::
+      wrapItems env cs its rs
+  | _, its, _ => its
+end
+
+mutual
+/-- A measured node placed in `v`, and its children where its layout puts them. Where something
+wraps, its children are laid out twice: once for their widths, then with the heights those widths
+give. -/
 def place (env : Env) : Node Msg → Rect → Node Msg
   | mk w st i none cs, v => mk w st { i with viewport := v, content := v } none cs
   | mk w st i (some l) cs, v =>
+    let e := i.inherit env
     let items := keptItems cs
-    let content := w.content (envAt env i) st v i.req
-    mk w st { i with viewport := v, content } (some l) (placeList (i.inherit env) v cs (l.assign content items))
+    let (req, items) :=
+      if i.wraps then
+        let items := wrapItems e cs items (l.assign (w.content (envAt env i) st v i.req) items)
+        ((i.req.1, (l.sizeReq items).2), items)
+      else (i.req, items)
+    let content := w.content (envAt env i) st v req
+    mk w st { i with viewport := v, content } (some l) (placeList e v cs (l.assign content items))
   | deferred i a s b, v => deferred { i with viewport := v, content := v } a s b
 
 /-- Children placed where their layout puts them, and overlays where `Overlay.place` puts them for
@@ -418,7 +457,10 @@ a parent at `anchor`. -/
 def placeList (env : Env) (anchor : Rect) : List (Node Msg) → List Rect → List (Node Msg)
   | c :: cs, r :: rs =>
     let r := match c.info.overlay with
-      | some k => k.place env.window anchor c.info.req
+      | some k =>
+        let r := k.place env.window anchor c.info.req
+        -- An overlay that wraps is as tall as it is at the width it is given.
+        if c.info.wraps then k.place env.window anchor (c.info.req.1, heightAt env c r.width) else r
       | none => r
     place env c r :: placeList env anchor cs rs
   | cs, [] => cs

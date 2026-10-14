@@ -152,6 +152,9 @@ structure Widget (Msg : Type) where
   mapChildren : Env → Dynamic → Scene → Scene
   /-- The pointer's shape over it. -/
   cursor : Env → Dynamic → Cursor
+  /-- For a widget whose height depends on its width, such as a wrapped paragraph: its height
+  request at a width. The tree asks once widths are known. -/
+  heightFor : Option (Env → Dynamic → Int → SizeReq)
 
 /-- A widget over its own state type `σ`. -/
 structure Widget.Spec (Msg σ : Type) where
@@ -170,6 +173,7 @@ structure Widget.Spec (Msg σ : Type) where
   moving : Option (Env → σ → Bool) := none
   mapChildren : Env → σ → Scene → Scene := fun _ _ s => s
   cursor : Env → σ → Cursor := fun _ _ => .default
+  heightFor : Option (Env → σ → Int → SizeReq) := none
 
 namespace Widget.Spec
 
@@ -195,6 +199,7 @@ def build (s : Widget.Spec Msg σ) : Widget Msg where
   moving := s.moving.map fun f env d => f env (s.state d)
   mapChildren := fun env d => s.mapChildren env (s.state d)
   cursor := fun env d => s.cursor env (s.state d)
+  heightFor := s.heightFor.map fun f env d => f env (s.state d)
 
 end Widget.Spec
 
@@ -216,6 +221,7 @@ def Widget.mapMsg {α β : Type} (f : α → β) (w : Widget α) : Widget β whe
   moving := w.moving
   mapChildren := w.mapChildren
   cursor := w.cursor
+  heightFor := w.heightFor
 
 /-- A widget that only holds children: it draws nothing and asks for nothing itself. -/
 def Widget.container {Msg : Type} (kind : String) : Widget Msg :=

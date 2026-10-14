@@ -4,6 +4,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Paw.Widget
+import Paw.Wrap
+import Std.Data.HashMap
 
 /-! # Labels, buttons and checkboxes
 
@@ -30,40 +32,125 @@ def centeredText (env : Env) (v : Rect) (x : Int) (t : SafeText) (style : TextSt
   let (_, h) := env.measure style t
   .text ⟨x, v.y0 + (v.height - h) / 2⟩ t style
 
-/-- One line of text, in bold if `bold`. -/
-def label {Msg : Type} (t : SafeText) (bold : Bool := false) : Widget Msg :=
-  let style (env : Env) : TextStyle := { textStyle env with bold }
-  Widget.Spec.build (σ := NoState) {
-    kind := "label"
-    init := {}
-    sizeReq := fun env _ =>
-      let (w, h) := env.measure (style env) t
-      (fixedSize w.toNat, fixedSize h.toNat)
-    render := fun env _ v => Scene.inBox v [centeredText env v v.x0 t (style env)]
-    render_within := fun _ _ v => Scene.inBox_within v _
-    access := fun _ _ => some { role := .label, name := t } }
+/-- What a text does with what does not fit its box. -/
+inductive TextOverflow where
+  /-- Cut at the box's edge. -/
+  | clip
+  /-- Cut short with an ellipsis, drawn by Paw. -/
+  | ellipsis
+  deriving Repr, DecidableEq, Inhabited
+
+/-- How a block of text is laid out. -/
+structure TextCfg where
+  bold : Bool := false
+  /-- Wrap to the box's width. -/
+  wrap : Bool := false
+  /-- At most this many lines are shown. -/
+  maxLines : Option Nat := none
+  overflow : TextOverflow := .clip
+  deriving Repr, DecidableEq, Inhabited
+
+/-- Widths of words and of characters, each measured once. -/
+structure Widths where
+  words : Std.HashMap String Int
+  chars : Std.HashMap Char Int
+
+/-- The widths of every word and character in `lines`, in `style`. -/
+def Widths.of (env : Env) (style : TextStyle) (lines : List SafeText) : Widths :=
+  let width (s : String) := (env.measure style (SafeText.trusted s)).1
+  lines.foldl (init := { words := {}, chars := {} }) fun acc l =>
+    let cs := l.text.toList
+    let chars := cs.foldl (fun m c => if m.contains c then m else m.insert c (width c.toString)) acc.chars
+    let words := (Wrap.words cs).foldl (fun m (w, _) =>
+      let k := String.ofList w
+      if m.contains k then m else m.insert k (width k)) acc.words
+    { words, chars }
+
+def Widths.word (ws : Widths) (w : List Char) : Int := ws.words.getD (String.ofList w) 0
+def Widths.char (ws : Widths) (c : Char) : Int := ws.chars.getD c 0
+
+/-- The ellipsis Paw draws where it cuts text short. -/
+def ellipsisChar : Char := '…'
+
+/-- The longest start of `cs` that fits `room`, measured by `cw`. -/
+def fitPrefix (cw : Char → Int) : Int → List Char → List Char
+  | _, [] => []
+  | room, c :: cs => if cw c ≤ room then c :: fitPrefix cw (room - cw c) cs else []
+
+/-- `cs` cut short with an ellipsis to fit `width`, measured by `cw`, with no space before the
+ellipsis: always if `more` was left out after it, else only if it does not fit. -/
+def ellipsize (cw : Char → Int) (width : Int) (cs : List Char) (more : Bool := false) : List Char :=
+  if !more && (cs.map cw).sum ≤ width then cs
+  else ((fitPrefix cw (width - cw ellipsisChar) cs).reverse.dropWhile (· == ' ')).reverse ++ [ellipsisChar]
+
+/-- The width of `t` on one line as wrapping measures it, so that a box this wide holds it on one
+line. -/
+def Widths.line (ws : Widths) (t : SafeText) : Int :=
+  match Wrap.lines (2 ^ 40) ws.word ws.char t.text.toList with
+  | [l] => Wrap.lineWidth Wrap.Piece.core Wrap.Piece.full l
+  | _ => 0
+
+/-- The lines a block of text shows in a box `width` wide: wrapped if it wraps, at most
+`maxLines`, and with the last cut short by an ellipsis if text was left out and it asks. -/
+def TextCfg.layout (cfg : TextCfg) (env : Env) (style : TextStyle) (width : Int) (lines : List SafeText) :
+    List SafeText :=
+  let ws := Widths.of env style (lines ++ [SafeText.trusted ellipsisChar.toString])
+  let broken := if cfg.wrap then lines.flatMap fun l =>
+      if l.text.isEmpty then [l]
+      else (Wrap.wrap width ws.word ws.char l.text.toList).map (SafeText.trusted ∘ String.ofList)
+    else lines
+  let shown := match cfg.maxLines with
+    | some n => broken.take n
+    | none => broken
+  let cut := shown.length < broken.length
+  match cfg.overflow, shown.getLast? with
+  | .ellipsis, some last =>
+    shown.dropLast ++ [SafeText.trusted (String.ofList (ellipsize ws.char width last.text.toList cut))]
+  | _, _ => shown
+
+/-- The height of a line of text in `style`. -/
+def lineHeight (env : Env) (style : TextStyle) : Int := (env.measure style (SafeText.trusted "M")).2
 
 /-- Lines joined by spaces, as a screen reader reads a paragraph. -/
 def joinLines (lines : List SafeText) : SafeText :=
   lines.foldl (fun acc l => if acc.text.isEmpty then l else acc ++ SafeText.trusted " " ++ l) SafeText.empty
 
-/-- Lines of text, one under another. -/
-def paragraph {Msg : Type} (lines : List SafeText) : Widget Msg :=
+/-- Lines of text, laid out by `cfg`. Wrapped, it asks for its natural width but takes less, and
+its height at the width it is given. -/
+def textBlock {Msg : Type} (lines : List SafeText) (cfg : TextCfg := {}) : Widget Msg :=
+  let style (env : Env) : TextStyle := { textStyle env with bold := cfg.bold }
+  let flexible := cfg.wrap || cfg.overflow == .ellipsis
+  let height (env : Env) (n : Nat) : SizeReq := SizeReq.fixedSize (n * lineHeight env (style env)).toNat
   Widget.Spec.build (σ := NoState) {
-    kind := "paragraph"
+    kind := "text"
     init := {}
     sizeReq := fun env _ =>
-      let sizes := lines.map (env.measure (textStyle env))
-      (fixedSize (sizes.foldl (fun m (w, _) => max m w.toNat) 0),
-       fixedSize (sizes.foldl (fun s (_, h) => s + h.toNat) 0))
+      let w := if cfg.wrap then
+          let ws := Widths.of env (style env) lines
+          lines.foldl (fun m t => max m (ws.line t)) 0
+        else lines.foldl (fun m t => max m (env.measure (style env) t).1) 0
+      let n := match cfg.maxLines with | some n => min n lines.length | none => lines.length
+      (if flexible then maxSize w.toNat else fixedSize w.toNat, height env n)
+    heightFor := if cfg.wrap then some fun env _ width => height env (cfg.layout env (style env) width lines).length
+      else none
     render := fun env _ v =>
-      let style := textStyle env
-      let (_, items) := lines.foldl (fun (y, ds) t =>
-        let (_, h) := env.measure style t
-        (y + h, ds ++ [Draw.text ⟨v.x0, y⟩ t style])) (v.y0, [])
+      let st := style env
+      let shown := cfg.layout env st v.width lines
+      let lh := lineHeight env st
+      -- One line is centered in its box, as a label is; more go from the top.
+      let items := match shown with
+        | [t] => [centeredText env v v.x0 t st]
+        | _ => shown.zipIdx.map fun (t, k) => Draw.text ⟨v.x0, v.y0 + k * lh⟩ t st
       Scene.inBox v items
     render_within := fun _ _ v => Scene.inBox_within v _
     access := fun _ _ => some { role := .label, name := joinLines lines } }
+
+/-- One line of text, in bold if `bold`. -/
+def label {Msg : Type} (t : SafeText) (bold : Bool := false) : Widget Msg :=
+  textBlock [t] { bold, maxLines := some 1 }
+
+/-- Lines of text, one under another, each wrapped to the width given. -/
+def paragraph {Msg : Type} (lines : List SafeText) : Widget Msg := textBlock lines { wrap := true }
 
 /-- A button that emits `onClick` when clicked, or when Enter or Space is pressed on it; if
 `designated`, only when that input designated it, as `Req.choose`. -/

@@ -4,7 +4,7 @@
 # Rust comes from rustup and Lean from elan.
 export PATH := $(HOME)/.cargo/bin:$(HOME)/.elan/bin:$(PATH)
 
-.PHONY: all build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland bench bench-lean bench-rust
+.PHONY: all build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland e2e-atspi bench bench-lean bench-rust
 
 all: test coverage goldens
 
@@ -36,7 +36,7 @@ goldens-update:
 	lake build paw-goldens
 	.lake/build/bin/paw-goldens --update
 
-e2e: e2e-x11 e2e-wayland
+e2e: e2e-x11 e2e-wayland e2e-atspi
 
 e2e-x11:
 	lake build paw-gallery
@@ -58,3 +58,7 @@ bench-lean:
 
 bench-rust:
 	cd rust && cargo run --quiet --release --example bench
+
+e2e-atspi:
+	lake build paw-gallery
+	sh tests/e2e/atspi.sh

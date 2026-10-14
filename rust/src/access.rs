@@ -30,7 +30,10 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
         .map(|n| {
             let mut node = Node::new(role(n.role));
             let name = if n.name.is_empty() && n.role == 6 { title } else { &n.name };
-            if !name.is_empty() {
+            // AccessKit reads a label's text from its value; other roles are named by their label.
+            if n.role == 0 {
+                node.set_value(name);
+            } else if !name.is_empty() {
                 node.set_label(name);
             }
             if let Some(v) = &n.value {
@@ -116,6 +119,9 @@ mod tests {
         assert_eq!(find(4).value(), None, "a password's value is never passed on");
         assert_eq!(find(2).bounds().map(|b| b.x1), Some(200.0));
         assert_eq!(find(0).children(), &[NodeId(2), NodeId(3), NodeId(4)]);
+        let label = update(0, &[node(0, 6, "", None, vec![5]), node(5, 0, "count: 1", None, vec![])], 1.0, "t");
+        let l = &label.nodes.iter().find(|(n, _)| *n == NodeId(5)).unwrap().1;
+        assert_eq!(l.value(), Some("count: 1"), "a label's text is its value");
     }
 
     #[test]

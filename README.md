@@ -1,8 +1,6 @@
 # Paw
 
-*This library and its documentation were written by an AI agent, not a human.*
-
-Paw is a GUI library for Lean in the Elm style: an app is a model, an `update` that handles messages, and a `view` that draws the model. It is largely inspired by [monomer](https://github.com/fjvallarino/monomer), a GUI library for Haskell, and follows its design of widgets, layout and merging a rebuilt view with the one on screen. Where a security rule can be stated as a proposition, Paw states it in a type: widgets prove they draw only inside their box, and effects such as opening a link need proof that the user chose the thing they act on.
+*This library and its documentation were written by an AI agent, not a human.* But gosh it did such a good job because I was able to point the agent at a very inspiring GUI library written in Haskell known as [monomer](https://github.com/fjvallarino/monomer). Paw follows monomer's design of widgets, layout and merging a rebuilt view with the one on screen. Where a security rule can be stated as a proposition, Paw states it in a type proposition: widgets prove they draw only inside their box, and effects such as opening a link need proof that the user chose the thing they act on. We are able to do this in Lean but not Haskell. Lean has dependent types and high assurance security software like a GUI library should make use of dependent types for it's security properties.
 
 It runs on Linux desktop, on X11 and Wayland, with a platform layer in Rust.
 

@@ -16,7 +16,7 @@ once outside the timed region.
 The budget: one input handled, from routing to the new scene, in well under a millisecond for an
 ordinary view; a frame drawn in a few milliseconds. -/
 
-namespace Paw.Bench
+namespace PawBench
 
 open Paw
 
@@ -284,9 +284,9 @@ def platformBenches : IO (Array LeanBench.Bench) := do
     mkBench "platform measure 540 characters" "platform" long size (Linux.measure {}),
     mkBench "platform draw 100 rows to PNG, 800x600" "platform" scene png (Linux.renderPng · 800 600) (samples := 20)]
 
-end Paw.Bench
+end PawBench
 
-open Paw.Bench in
+open PawBench in
 def main (args : List String) : IO UInt32 := do
   for suite in [textBenches, codecBenches, layoutBenches, treeBenches, routeBenches, overlayBenches, timeBenches, wrapBenches, runtimeBenches,
       platformBenches] do

@@ -49,6 +49,9 @@ jobs:
           key: build-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'rust/Cargo.lock', 'rust/rust-toolchain.toml') }}
           restore-keys: build-
       - run: make ci
+      - name: Build the benchmarks (their own Lake project)
+        working-directory: bench
+        run: lake build
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

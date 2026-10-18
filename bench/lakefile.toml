@@ -1,0 +1,28 @@
+name = "paw-bench"
+reservoir = false
+version = "0.1.0"
+packagesDir = "../.lake/packages"
+defaultTargets = ["paw-bench"]
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+warningAsError = true
+
+[[require]]
+name = "LeanBench"
+git = "https://github.com/alok/LeanBench"
+rev = "250d2a892bf8c91ec3ae5de8517793e18379f97b"
+
+# Declared last so that paw's pins take precedence over LeanBench's.
+[[require]]
+name = "paw"
+path = "../"
+
+[[lean_lib]]
+name = "PawBench"
+globs = ["PawBench.+"]
+
+[[lean_exe]]
+name = "paw-bench"
+root = "PawBench.Main"

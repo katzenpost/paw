@@ -56,9 +56,9 @@ BENCH_ARGS ?=
 
 bench: bench-lean bench-rust
 
+# The Lean benchmarks are their own Lake project in bench/, so paw does not depend on LeanBench.
 bench-lean:
-	lake build paw-bench
-	.lake/build/bin/paw-bench $(BENCH_ARGS)
+	cd bench && lake build paw-bench && .lake/build/bin/paw-bench $(BENCH_ARGS)
 
 bench-rust:
 	cd rust && cargo run --quiet --release --example bench

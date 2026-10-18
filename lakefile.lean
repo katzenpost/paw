@@ -2,11 +2,12 @@ import Lake
 open Lake DSL System
 
 package paw where
+  version := v!"0.1.0"
+  description := "An Elm-style GUI library for Lean, with security laws in its types"
+  keywords := #["gui", "elm", "ui", "security"]
+  license := "AGPL-3.0-only"
   leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩,
     ⟨`warningAsError, true⟩]
-
-require LeanBench from git
-  "https://github.com/alok/LeanBench" @ "250d2a892bf8c91ec3ae5de8517793e18379f97b"
 
 @[default_target]
 lean_lib Paw
@@ -24,10 +25,6 @@ lean_exe «paw-test» where
 /-- Draws scenes offscreen and compares them with the approved images. -/
 lean_exe «paw-goldens» where
   root := `Paw.Tests.Goldens
-
-/-- Benchmarks of each layer, with LeanBench. -/
-lean_exe «paw-bench» where
-  root := `Paw.Bench.Main
 
 /-- Lists public definitions that no test reaches. -/
 lean_exe «paw-coverage» where

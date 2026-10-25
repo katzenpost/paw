@@ -306,7 +306,15 @@ apk() {
   # Stored, so the library is loaded straight from the APK.
   (cd "$A" && zip -q -0 "$A/unsigned.apk" "lib/$ABI/libmain.so")
   "$BT/zipalign" -f -P 16 4 "$A/unsigned.apk" "$A/aligned.apk"
-  "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
+  # Signed with the debug key, which Android's tools make when a machine first needs one.
+  KEYSTORE=$HOME/.android/debug.keystore
+  if [ ! -f "$KEYSTORE" ]; then
+    mkdir -p "$HOME/.android"
+    keytool -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
+      -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+      -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+  fi
+  "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android \
     --ks-key-alias androiddebugkey --out "$WORK/$EXE-$ABI.apk" "$A/aligned.apk"
   ls -la "$WORK/$EXE-$ABI.apk"
 }

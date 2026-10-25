@@ -8,12 +8,16 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod access;
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod codec;
 pub mod events;
 pub mod image;
 pub mod render;
 pub mod scene;
 pub mod text;
+pub mod textinput;
+pub mod touch;
 pub mod window;
 
 use codec::{Reader, Writer};
@@ -25,6 +29,12 @@ pub const ABI_VERSION: u32 = 2;
 #[no_mangle]
 pub extern "C" fn paw_abi_version(_unit: *mut lean_object) -> u32 {
     ABI_VERSION
+}
+
+/// Whether this is Android.
+#[no_mangle]
+pub extern "C" fn paw_is_android(_unit: *mut lean_object) -> u8 {
+    cfg!(target_os = "android") as u8
 }
 
 /// The bytes of a borrowed Lean `ByteArray`.

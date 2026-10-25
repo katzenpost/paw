@@ -9,11 +9,11 @@ OPENED=$WORK/opened.txt
 GALLERY=$PWD/.lake/build/bin/paw-gallery
 FAILED=0
 
-# Runs the gallery with the test hooks, and xdg-open replaced by a stub that records the link.
+# Runs the gallery with the test hooks, and as its browser a stub that records the link.
 start_gallery() {
   : > "$LOG"
   env PAW_TEST_LOG="$LOG" PAW_TEST_LAYOUT="$LAYOUT" PAW_E2E_OPENED="$OPENED" \
-    PATH="$PWD/tests/e2e/stubs:$PATH" "$GALLERY" &
+    BROWSER="$PWD/tests/e2e/stubs/browser" "$GALLERY" &
   GALLERY_PID=$!
 }
 
@@ -30,6 +30,16 @@ wait_for() {
 # The middle of the widget with a key, in logical pixels from the window's top left.
 center() {
   awk -v k="$1" '$1 == k { printf "%d %d\n", ($2 + $4) / 2, ($3 + $5) / 2 }' "$LAYOUT"
+}
+
+# Waits up to 2 s for the widget with a key to leave where it was, given as `center` said.
+wait_moved() {
+  i=0
+  while [ "$(center "$1")" = "$2" ]; do
+    i=$((i + 1))
+    if [ $i -gt 100 ]; then return 1; fi
+    sleep 0.02
+  done
 }
 
 # The gallery's CPU time so far, in clock ticks.

@@ -31,10 +31,14 @@ OY=$2
 
 # A headless sway has no pointer of its own; vpointer adds a virtual one that stays connected,
 # fed commands through a pipe.
-click() {
+click_now() {
   set -- $(center "$1")
   echo "move $((OX + $1)) $((OY + $2))" >&3
   echo "click" >&3
+}
+
+click() {
+  click_now "$1"
   sleep 0.3
 }
 
@@ -50,9 +54,13 @@ expect "agree=true" "a checkbox toggles"
 click draft
 sleep 0.6
 wtype -s 200 -d 30 "plums"
-click add
+# The new row moves the link down. Clicking it as soon as it has moved does not count as the
+# user's choice; a person takes longer than the router's 500 ms to find it again.
+before=$(center link)
+click_now add
+wait_moved link "$before"
+click_now link
 expect "plums" "an item is added"
-click link
 expect_still "opened=0" "a click on a button that just moved opens nothing"
 sleep 0.6
 click link

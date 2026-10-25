@@ -4,7 +4,7 @@
 
 Paw is a GUI library for Lean in the Elm style: an app is a model, an `update` that handles messages, and a `view` that draws the model. It follows monomer's design of widgets, layout and merging a rebuilt view with the one on screen. Where a security rule can be stated as a proposition, Paw states it in a type: widgets prove they draw only inside their box, and effects such as opening a link need proof that the user chose the thing they act on. Lean can do this and Haskell cannot, because Lean has dependent types, and high-assurance software such as a GUI library should use them for its security properties.
 
-It runs on Linux desktop, on X11 and Wayland, with a platform layer in Rust.
+It runs on Linux desktop, on X11 and Wayland, and on Android, with a platform layer in Rust.
 
 What Paw can draw:
 
@@ -16,17 +16,31 @@ Paw builds with Lean 4 (the version in `lean-toolchain`, from [elan](https://git
 
 The Rust platform layer is built on these crates:
 
-- [winit](https://github.com/rust-windowing/winit) opens windows and reads input on X11 and Wayland.
+- [winit](https://github.com/rust-windowing/winit) opens windows and reads input on X11 and Wayland, and on Android through [android-activity](https://github.com/rust-mobile/android-activity)'s GameActivity.
 - [tiny-skia](https://github.com/RazrFalcon/tiny-skia) draws, and [softbuffer](https://github.com/rust-windowing/softbuffer) puts the drawn pixels on screen without a GPU.
 - [cosmic-text](https://github.com/pop-os/cosmic-text) shapes and lays out text.
-- [AccessKit](https://github.com/AccessKit/accesskit) exposes the widget tree to screen readers over AT-SPI.
-- [arboard](https://github.com/1Password/arboard) reads and writes the clipboard.
+- [AccessKit](https://github.com/AccessKit/accesskit) exposes the widget tree to screen readers over AT-SPI and on Android.
+- [arboard](https://github.com/1Password/arboard) reads and writes the clipboard, and [android_clipboard](https://github.com/podusowski/android_clipboard) on Android.
+- [webbrowser](https://github.com/amodm/webbrowser-rs) opens links.
 - [image](https://github.com/image-rs/image) decodes PNG and JPEG.
 - [lean-sys](https://github.com/katzenpost/lean-sys) gives Rust the Lean runtime's C API.
 
 On the Lean side, [LeanBench](https://github.com/alok/LeanBench) runs the benchmarks.
 
 The end-to-end tests (`make e2e`) drive the gallery as a user would and need more installed: Xvfb and xdotool for X11; sway, wtype and jq for Wayland; and `dbus-run-session`, the AT-SPI bus and Python's `gi` bindings for AT-SPI. With xclip and wl-clipboard installed they also check the clipboard. `make ci` runs everything, end-to-end tests included.
+
+### Android
+
+Building for Android needs the Android SDK with its NDK and build-tools (in `~/Android/Sdk`, or where `ANDROID_HOME` says), a JDK, [cargo-ndk](https://github.com/bbqsrc/cargo-ndk) and the Rust targets:
+
+```
+cargo install cargo-ndk
+rustup target add x86_64-linux-android aarch64-linux-android
+```
+
+![The gallery on an Android phone emulator](docs/android.png)
+
+`make apk` builds the gallery as `.lake/android/paw-gallery-x86_64.apk`, for the emulator; `make apk ANDROID_ABI=arm64-v8a` builds it for phones. `make android-run` installs and starts it on the connected device, and `make e2e-android` drives it on an emulator. `android/build.sh` builds another app the same way; its header says how. It compiles Lean's runtime and the C of every Lean module the app imports with the NDK, and links them with the app's Rust into one library; the sources and Java libraries it fetches are pinned with their checksums in `android/deps.lock`.
 
 ## Try it
 

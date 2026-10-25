@@ -49,6 +49,7 @@ def tests : TestM Unit := do
   check "Lean decodes the events Rust encodes" (decoded.map (·.length) == some 16)
   check "and they are the events meant"
     (decoded.any fun ds => (ds.zip sample).all fun (a, b) => eventEnc a == eventEnc b)
+  check "Linux desktop is not Android" !onAndroid
   check "a set title request reaches Rust" (echoes (.setTitle (SafeName.filter "t")))
   check "a clipboard request" (echoes (.setClipboard (SafeText.filter "c")))
   check "a link" (echoes (.openUri "https://example.org"))

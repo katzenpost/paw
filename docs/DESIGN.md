@@ -38,17 +38,18 @@ CryptWalker already relies on this. `NIKE` carries `commutes` and `derive_safe`,
 
 **Lean** holds everything that decides what the user sees and what the app may do. This covers the app's model and update, the widget tree and its merge, layout, hit-testing, focus, and the display list. All of it is pure except the runtime loop, so the laws below are theorems about the code that actually runs.
 
-**Rust** holds what talks to the platform. On Linux desktop, X11 and Wayland both:
+**Rust** holds what talks to the platform: Linux desktop, on X11 and Wayland, and Android.
 
 | Concern | Crate | Why |
 | --- | --- | --- |
-| Windows and input | winit 0.30, driven with `pump_app_events`; its IME events for input methods | Lean owns the loop and polls, as monomer polls SDL; no Lean code runs inside a winit callback. winit picks Wayland or X11 at startup |
+| Windows and input | winit 0.30, driven with `pump_app_events`; its IME events for input methods. On Android, winit on GameActivity | Lean owns the loop and polls, as monomer polls SDL; no Lean code runs inside a winit callback. winit picks Wayland or X11 at startup |
 | Drawing a Scene | tiny-skia, shown with softbuffer | Draws on the CPU, so the same scene gives the same pixels everywhere: golden images can be compared exactly, and no GPU is needed under Xvfb or a headless compositor |
 | Decoding images | image, with only its PNG and JPEG decoders | No SVG and no other formats, so that less code reads content from elsewhere |
 | Text shaping, measuring, drawing | cosmic-text, with DejaVu Sans bundled | Measuring and drawing use one font system, so text is drawn as wide as layout measured it. Offscreen renders use only the bundled fonts; a window adds the system's for characters they lack |
-| Clipboard | arboard, with Wayland's data-control protocol | The clipboard is read only when the user presses Ctrl-V, which becomes a `paste` event |
-| Opening links, notifications | `xdg-open` and `notify-send`, run with the link or text as arguments, never through a shell | Lean has already checked the link |
-| Accessibility | AccessKit 0.21 with `accesskit_winit` 0.29, over AT-SPI | Widgets describe themselves in Lean; Rust only passes the tree on |
+| Clipboard | arboard, with Wayland's data-control protocol; android_clipboard on Android | The clipboard is read only when the user presses Ctrl-V, which becomes a `paste` event |
+| Opening links | webbrowser, which runs the user's browser with the link as one argument, never through a shell, and on Android sends it as an intent | Lean has already checked the link |
+| Notifications | `notify-send`, run with the text as arguments; on Android, the notification manager, through JNI | |
+| Accessibility | AccessKit 0.25 with `accesskit_winit` 0.34, over AT-SPI and Android's accessibility framework | Widgets describe themselves in Lean; Rust only passes the tree on |
 
 Some platform facts the guidelines rely on, as they stand on Linux:
 
@@ -57,6 +58,15 @@ Some platform facts the guidelines rely on, as they stand on Linux:
 - **Keys held when focus arrives.** winit reports keys held while the window gains focus as synthetic key events. The Rust layer drops them, because they were not pressed in this window.
 - **A lost display.** When the compositor or X server goes away, winit's loop exits, and the Rust layer reports `close`.
 - **Focus and visibility.** winit's `Focused` and `Occluded` become `WindowEvent.focus` and `WindowEvent.visible`. Not every compositor reports occlusion; where none does, the window counts as seen.
+
+On Android the app is one shared library, `libmain.so`, holding Lean's runtime, the C that Lean emits for the app and every module it imports, the stdlib among them, and the Rust layer. `android/build.sh` builds it with the NDK and packages it with GameActivity, from pinned sources and libraries. The Lean API is the same as on Linux; these are the platform's differences:
+
+- **Threads.** Android delivers an app's events to the thread that runs `android_main`, which has a small stack. Lean's `main` runs on a thread of its own with the stack Lean asks for, and the window's calls are run on `android_main`'s thread, which between them keeps taking in the system's events.
+- **Touch.** The first finger down is the primary button: a move to where it lands, a press, and on lifting a release and the pointer leaving the window, so nothing stays hovered. Other fingers are ignored until it lifts. The router's checks apply to taps as to clicks.
+- **The soft keyboard.** It is shown while a text field asks for input, and it edits a buffer of its own, GameTextInput's. The Rust layer reads that buffer after each poll: characters removed become Backspace, characters added become `text`, a newline becomes Enter, and the composing region becomes the preedit. Keys from a hardware keyboard go to winit, as on Linux. winit reports no modifier changes on Android, so they are read from the modifier keys.
+- **Insets.** GameActivity draws under the system's bars and the soft keyboard. The window's size is the area clear of them, which changes as the keyboard opens and closes and the screen turns, and is reported as a resize.
+- **The back key** is Escape.
+- **Lifecycle.** Android takes the window's surface away while the app is in the background and gives a new one when it returns; the app keeps running, and draws again. Lean's runtime starts once per process.
 
 The byte formats are built from `Codec α`, a structure that carries its own law, the same pattern as the widget laws below:
 
@@ -502,7 +512,7 @@ Widgets that change with time, such as a blinking caret or an animation, declare
 
 The router keeps the schedule as it indexes the tree after each layout: a widget that still ticks as often keeps its next tick, a new one is due a period later. `Runtime.advance` is the step for time passing. It gives each widget whose tick is due an `Event.tick`, to that widget alone, and hands messages from `Cmd.after` that are due to `update`, with origin `other`, so a timer carries no authority whatever started it.
 
-The loop sleeps in the platform's poll until an event or `Runtime.nextDeadline`, the earliest tick, delayed message or tooltip due. With nothing waiting it sleeps with no timeout, so an idle app uses no CPU; the end-to-end tests check this. Monomer instead draws 60 frames a second while anything is scheduled and polls otherwise. A task finishing and a producer sending wake the platform through `Platform.wake`, which on Linux sends winit a user event through its `EventLoopProxy`, so neither makes the loop poll; on a platform that cannot be woken, the loop waits at most 16 ms while they run. While the window cannot be seen, widgets do not tick at all.
+The loop sleeps in the platform's poll until an event or `Runtime.nextDeadline`, the earliest tick, delayed message or tooltip due. With nothing waiting it sleeps with no timeout, so an idle app uses no CPU; the end-to-end tests check this. Monomer instead draws 60 frames a second while anything is scheduled and polls otherwise. A task finishing and a producer sending wake the platform through `Platform.wake`, which sends winit a user event through its `EventLoopProxy`, so neither makes the loop poll; a wake or an event that comes between two polls ends the next one at once; on a platform that cannot be woken, the loop waits at most 16 ms while they run. While the window cannot be seen, widgets do not tick at all.
 
 **Animations.** `fadeIn` and `slideIn` wrap a child and bring it in over a time from their first tick. A slide moves the content rectangle, as a scroll does, so hit-testing follows what is drawn. A fade lowers the alpha of its children's drawing through `mapChildren`, which changes the scene before the tree clips it to the box, so the clipping law is unchanged. An animation is not trusted to be harmless: while it runs, its widget's `moving` is true, and the router counts everything in it as moved on every frame. A control that is still faint, or still sliding under the pointer, cannot be designated until it has been still for `stableMs`. With reduced motion (`PAW_REDUCE_MOTION=1`), every animation is at its end at once and never ticks.
 

@@ -16,9 +16,13 @@ wait_for "$LAYOUT" '^inc ' || { fail "the gallery reported its layout"; exit 1; 
 sleep 1
 expect_idle "an idle gallery does not wake"
 
-click() {
+click_now() {
   set -- $(center "$1")
   xdotool mousemove --window "$W" "$1" "$2" click 1
+}
+
+click() {
+  click_now "$1"
   sleep 0.3
 }
 
@@ -34,11 +38,13 @@ expect "agree=true" "a checkbox toggles"
 click draft
 sleep 0.6
 xdotool type --delay 30 "plums"
-click add
+# The new row moves the link down. Clicking it as soon as it has moved does not count as the
+# user's choice; a person takes longer than the router's 500 ms to find it again.
+before=$(center link)
+click_now add
+wait_moved link "$before"
+click_now link
 expect "plums" "an item is added"
-# The new row moved the link down. Clicking it at once does not count as the user's choice;
-# a person takes longer than the router's 500 ms to find it again.
-click link
 expect_still "opened=0" "a click on a button that just moved opens nothing"
 sleep 0.6
 click link

@@ -10,6 +10,7 @@ use crate::events::{Button, Input, InputKind, Key, Mods, Request, WindowEvent};
 use crate::render::{render, UNITS};
 use crate::scene::Scene;
 use crate::text::with_text;
+use crate::touch::{Phase, Touch};
 use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -25,8 +26,20 @@ use winit::window::{Window, WindowId};
 
 /// Milliseconds since the platform layer started.
 pub fn now() -> u64 {
-    thread_local!(static START: Instant = Instant::now());
-    START.with(|s| s.elapsed().as_millis() as u64)
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// Runs `f` on the thread that owns the window. On Android that is `android_main`'s, where the
+/// system delivers the app's events; Lean runs on a thread of its own.
+#[cfg(not(target_os = "android"))]
+fn on_loop<R>(f: impl FnOnce() -> R) -> R {
+    f()
+}
+
+#[cfg(target_os = "android")]
+fn on_loop<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+    crate::android::on_main(f)
 }
 
 /// What other threads send the loop: AccessKit's requests, and a nudge to stop waiting.
@@ -62,7 +75,17 @@ struct App {
     mods: Mods,
     cursor: (i64, i64),
     scene: Scene,
-    clipboard: Option<arboard::Clipboard>,
+    clipboard: Clipboard,
+    touch: Touch,
+    /// What the soft keyboard has typed, on Android, where it edits a buffer of its own.
+    #[cfg(target_os = "android")]
+    typed: crate::textinput::TextInput,
+    ime: bool,
+    /// Whether a wake came since the last poll.
+    woken: bool,
+    /// The edges of the window that the system covers, in physical pixels: left, top, right and
+    /// bottom. Paw draws and lays out inside them.
+    inset: (u32, u32, u32, u32),
     proxy: EventLoopProxy<UserEvent>,
     adapter: Option<accesskit_winit::Adapter>,
     /// The last accessibility tree from Lean, for a screen reader that asks for it.
@@ -74,6 +97,41 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
+/// The system clipboard, read only when the user pastes.
+#[cfg(not(target_os = "android"))]
+struct Clipboard(Option<arboard::Clipboard>);
+
+#[cfg(not(target_os = "android"))]
+impl Clipboard {
+    fn new() -> Clipboard {
+        Clipboard(arboard::Clipboard::new().ok())
+    }
+    fn get(&mut self) -> Option<String> {
+        self.0.as_mut().and_then(|c| c.get_text().ok())
+    }
+    fn set(&mut self, t: String) {
+        if let Some(c) = self.0.as_mut() {
+            let _ = c.set_text(t);
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+struct Clipboard;
+
+#[cfg(target_os = "android")]
+impl Clipboard {
+    fn new() -> Clipboard {
+        Clipboard
+    }
+    fn get(&mut self) -> Option<String> {
+        android_clipboard::get_text().ok()
+    }
+    fn set(&mut self, t: String) {
+        let _ = android_clipboard::set_text(t);
+    }
+}
+
 fn units(v: f64, scale: f64) -> i64 {
     (v / scale * UNITS as f64).round() as i64
 }
@@ -82,7 +140,7 @@ fn key_of(k: &WKey) -> Option<Key> {
     Some(match k {
         WKey::Named(n) => match n {
             NamedKey::Enter => Key::Enter,
-            NamedKey::Escape => Key::Escape,
+            NamedKey::Escape | NamedKey::GoBack | NamedKey::BrowserBack => Key::Escape,
             NamedKey::Backspace => Key::Backspace,
             NamedKey::Tab => Key::Tab,
             NamedKey::Delete => Key::Delete,
@@ -109,9 +167,51 @@ fn key_of(k: &WKey) -> Option<Key> {
             NamedKey::F12 => Key::F(12),
             _ => return None,
         },
-        WKey::Character(s) => Key::Char(s.chars().next()?.to_lowercase().next()?),
+        // Some Android versions give keys such as Enter as the character they type.
+        WKey::Character(s) => match s.chars().next()? {
+            '\n' | '\r' => Key::Enter,
+            '\t' => Key::Tab,
+            '\u{8}' => Key::Backspace,
+            '\u{1b}' => Key::Escape,
+            '\u{7f}' => Key::Delete,
+            c if c.is_control() => return None,
+            c => Key::Char(c.to_lowercase().next()?),
+        },
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn char_key(s: &str) -> Option<Key> {
+        key_of(&WKey::Character(s.into()))
+    }
+
+    #[test]
+    fn named_keys() {
+        assert_eq!(key_of(&WKey::Named(NamedKey::Enter)), Some(Key::Enter));
+        assert_eq!(key_of(&WKey::Named(NamedKey::GoBack)), Some(Key::Escape));
+        assert_eq!(key_of(&WKey::Named(NamedKey::Space)), Some(Key::Char(' ')));
+    }
+
+    #[test]
+    fn characters_are_lowercased() {
+        assert_eq!(char_key("V"), Some(Key::Char('v')));
+        assert_eq!(char_key("é"), Some(Key::Char('é')));
+    }
+
+    #[test]
+    fn control_characters_are_their_keys() {
+        assert_eq!(char_key("\n"), Some(Key::Enter));
+        assert_eq!(char_key("\r"), Some(Key::Enter));
+        assert_eq!(char_key("\t"), Some(Key::Tab));
+        assert_eq!(char_key("\u{8}"), Some(Key::Backspace));
+        assert_eq!(char_key("\u{1b}"), Some(Key::Escape));
+        assert_eq!(char_key("\u{7f}"), Some(Key::Delete));
+        assert_eq!(char_key("\u{0}"), None);
+    }
 }
 
 impl App {
@@ -120,6 +220,35 @@ impl App {
             .as_ref()
             .map(|w| w.scale_factor())
             .unwrap_or(1.0)
+    }
+
+    /// The part of the window Paw draws in, in physical pixels.
+    fn area(&self) -> Option<(u32, u32)> {
+        let s = self.window.as_ref()?.inner_size();
+        let (l, t, r, b) = self.inset;
+        Some((
+            s.width.saturating_sub(l + r).max(1),
+            s.height.saturating_sub(t + b).max(1),
+        ))
+    }
+
+    fn resize_event(&mut self) {
+        if let Some((w, h)) = self.area() {
+            let scale = self.scale();
+            self.events.push(WindowEvent::Resize(
+                units(w as f64, scale),
+                units(h as f64, scale),
+            ));
+        }
+    }
+
+    /// A point of the window in physical pixels, in units from the corner of the area.
+    fn point(&self, x: f64, y: f64) -> (i64, i64) {
+        let scale = self.scale();
+        (
+            units(x - self.inset.0 as f64, scale),
+            units(y - self.inset.1 as f64, scale),
+        )
     }
 
     fn input(&mut self, kind: InputKind) {
@@ -132,6 +261,7 @@ impl App {
     }
 
     fn present(&mut self) {
+        let Some((aw, ah)) = self.area() else { return };
         let (Some(window), Some(surface)) = (self.window.as_ref(), self.surface.as_mut()) else {
             return;
         };
@@ -139,16 +269,30 @@ impl App {
         let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
             return;
         };
+        let (l, t, _, _) = self.inset;
         let scale = window.scale_factor() as f32;
-        let pm = with_text(|t| render(&self.scene, w.get(), h.get(), scale, t));
+        let pm = with_text(|tx| render(&self.scene, aw, ah, scale, tx));
         if surface.resize(w, h).is_err() {
             return;
         }
         let Ok(mut buf) = surface.buffer_mut() else {
             return;
         };
-        for (dst, p) in buf.iter_mut().zip(pm.pixels()) {
-            *dst = ((p.red() as u32) << 16) | ((p.green() as u32) << 8) | p.blue() as u32;
+        let rgb = |p: &tiny_skia::PremultipliedColorU8| {
+            ((p.red() as u32) << 16) | ((p.green() as u32) << 8) | p.blue() as u32
+        };
+        let px = pm.pixels();
+        // What the system covers takes the colour of the area's corner.
+        let edge = px.first().map(rgb).unwrap_or(0);
+        for (y, row) in buf.chunks_mut(w.get() as usize).enumerate() {
+            for (x, dst) in row.iter_mut().enumerate() {
+                let (x, y) = (x as u32, y as u32);
+                *dst = if x >= l && y >= t && x - l < aw && y - t < ah {
+                    rgb(&px[((y - t) * aw + (x - l)) as usize])
+                } else {
+                    edge
+                };
+            }
         }
         let _ = buf.present();
     }
@@ -156,7 +300,13 @@ impl App {
 
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.window.is_some() {
+        // Android takes the surface away while the app is in the background.
+        if let Some(window) = self.window.clone() {
+            if self.surface.is_none() {
+                self.surface = surface(&window);
+                self.resize_event();
+                window.request_redraw();
+            }
             return;
         }
         // AccessKit must be attached before the window is first shown.
@@ -174,22 +324,20 @@ impl ApplicationHandler<UserEvent> for App {
         ));
         window.set_visible(true);
         let window = Rc::new(window);
-        if let Ok(ctx) = softbuffer::Context::new(window.clone()) {
-            self.surface = softbuffer::Surface::new(&ctx, window.clone()).ok();
-        }
-        let s = window.inner_size();
-        let scale = window.scale_factor();
-        self.events.push(WindowEvent::Resize(
-            units(s.width as f64, scale),
-            units(s.height as f64, scale),
-        ));
+        self.surface = surface(&window);
         self.window = Some(window);
+        self.resize_event();
+    }
+
+    fn suspended(&mut self, _el: &ActiveEventLoop) {
+        self.surface = None;
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, event: UserEvent) {
         use accesskit_winit::WindowEvent as Ak;
-        // A wake has done its work by ending the wait.
+        // A wake ends the wait, or, if it came between polls, the next one.
         let UserEvent::Access(event) = event else {
+            self.woken = true;
             return;
         };
         match event.window_event {
@@ -210,7 +358,8 @@ impl ApplicationHandler<UserEvent> for App {
                     accesskit::Action::Decrement => 3,
                     _ => return,
                 };
-                self.events.push(WindowEvent::Access(req.target.0, action));
+                self.events
+                    .push(WindowEvent::Access(req.target_node.0, action));
             }
             Ak::AccessibilityDeactivated => {}
         }
@@ -220,13 +369,9 @@ impl ApplicationHandler<UserEvent> for App {
         if let (Some(a), Some(w)) = (self.adapter.as_mut(), self.window.as_ref()) {
             a.process_event(w, &event);
         }
-        let scale = self.scale();
         match event {
             WE::CloseRequested => self.events.push(WindowEvent::Close),
-            WE::Resized(s) => self.events.push(WindowEvent::Resize(
-                units(s.width as f64, scale),
-                units(s.height as f64, scale),
-            )),
+            WE::Resized(_) => self.resize_event(),
             WE::RedrawRequested => self.present(),
             WE::Focused(f) => self.events.push(WindowEvent::Focus(f)),
             WE::Ime(ime) => match ime {
@@ -251,10 +396,25 @@ impl ApplicationHandler<UserEvent> for App {
                 };
             }
             WE::CursorMoved { position, .. } => {
-                self.cursor = (units(position.x, scale), units(position.y, scale));
+                self.cursor = self.point(position.x, position.y);
                 self.input(InputKind::Move(self.cursor.0, self.cursor.1));
             }
             WE::CursorLeft { .. } => self.input(InputKind::LeaveWindow),
+            WE::Touch(t) => {
+                let phase = match t.phase {
+                    winit::event::TouchPhase::Started => Phase::Started,
+                    winit::event::TouchPhase::Moved => Phase::Moved,
+                    winit::event::TouchPhase::Ended => Phase::Ended,
+                    winit::event::TouchPhase::Cancelled => Phase::Cancelled,
+                };
+                let (x, y) = self.point(t.location.x, t.location.y);
+                for kind in self.touch.event(t.id, phase, x, y) {
+                    if let InputKind::Move(x, y) = kind {
+                        self.cursor = (x, y);
+                    }
+                    self.input(kind);
+                }
+            }
             WE::MouseInput { state, button, .. } => {
                 let b = match button {
                     MouseButton::Left => Button::Primary,
@@ -290,16 +450,23 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 let pressed = event.state == ElementState::Pressed;
+                // winit reports no modifier changes on Android; they are read from the keys.
+                #[cfg(target_os = "android")]
+                if let WKey::Named(n) = &event.logical_key {
+                    match n {
+                        NamedKey::Shift => self.mods.shift = pressed,
+                        NamedKey::Control => self.mods.ctrl = pressed,
+                        NamedKey::Alt => self.mods.alt = pressed,
+                        NamedKey::Super | NamedKey::Meta => self.mods.sup = pressed,
+                        _ => {}
+                    }
+                }
                 let m = self.mods;
                 let Some(k) = key_of(&event.logical_key) else {
                     return;
                 };
                 if pressed && m.ctrl && !m.alt && k == Key::Char('v') {
-                    let text = self
-                        .clipboard
-                        .as_mut()
-                        .and_then(|c| c.get_text().ok())
-                        .unwrap_or_default();
+                    let text = self.clipboard.get().unwrap_or_default();
                     self.input(InputKind::Paste(text));
                     return;
                 }
@@ -320,10 +487,24 @@ impl ApplicationHandler<UserEvent> for App {
 
 /// Opens the window. The first poll reports its size.
 pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
+    let title = title.to_string();
+    on_loop(move || open_here(&title, width, height))
+}
+
+fn open_here(title: &str, width: u32, height: u32) -> Result<(), String> {
     // Lean runs `main` on a thread of its own; every use of the loop stays on that thread.
     let mut builder = EventLoop::<UserEvent>::with_user_event();
-    winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
-    winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    #[cfg(not(target_os = "android"))]
+    {
+        winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
+        winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    }
+    #[cfg(target_os = "android")]
+    {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        let app = crate::android::app().ok_or("paw: not started by android_main")?;
+        builder.with_android_app(app);
+    }
     let el = builder.build().map_err(|e| e.to_string())?;
     let proxy = el.create_proxy();
     match WAKER.get() {
@@ -337,7 +518,7 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
         }
     }
     with_text(|t| t.load_system_fonts());
-    let clipboard = arboard::Clipboard::new().ok();
+    let clipboard = Clipboard::new();
     LOOP.with(|l| *l.borrow_mut() = Some(el));
     APP.with(|a| {
         *a.borrow_mut() = Some(App {
@@ -350,6 +531,12 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
             cursor: (0, 0),
             scene: Scene::default(),
             clipboard,
+            touch: Touch::default(),
+            #[cfg(target_os = "android")]
+            typed: Default::default(),
+            ime: false,
+            woken: false,
+            inset: (0, 0, 0, 0),
             proxy,
             adapter: None,
             access: None,
@@ -361,11 +548,39 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
 /// Events since the last poll, waiting up to `timeout_ms` for the first, or with `u32::MAX`, until
 /// there is one.
 pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
+    on_loop(move || {
+        // What came in since the last poll ends this one at once.
+        let pending = APP.with(|a| {
+            a.borrow()
+                .as_ref()
+                .is_some_and(|app| app.woken || !app.events.is_empty())
+        });
+        pump(if pending { 0 } else { timeout_ms });
+        APP.with(|a| {
+            a.borrow_mut()
+                .as_mut()
+                .map(|app| {
+                    app.woken = false;
+                    std::mem::take(&mut app.events)
+                })
+                .unwrap_or_else(|| vec![WindowEvent::Close])
+        })
+    })
+}
+
+/// Takes in what the system has delivered, without waiting, for the next poll; for while Lean is
+/// busy, as Android expects its events to be handled promptly.
+#[cfg(target_os = "android")]
+pub fn idle() {
+    pump(0);
+}
+
+fn pump(timeout_ms: u32) {
     LOOP.with(|l| {
         APP.with(|a| {
             let (mut l, mut a) = (l.borrow_mut(), a.borrow_mut());
             let (Some(el), Some(app)) = (l.as_mut(), a.as_mut()) else {
-                return vec![WindowEvent::Close];
+                return;
             };
             let timeout =
                 (timeout_ms != u32::MAX).then(|| Duration::from_millis(timeout_ms as u64));
@@ -374,13 +589,21 @@ pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
             if let PumpStatus::Exit(_) = status {
                 app.events.push(WindowEvent::Close);
             }
-            std::mem::take(&mut app.events)
+            #[cfg(target_os = "android")]
+            {
+                app.read_typed();
+                app.read_insets();
+            }
         })
     })
 }
 
 /// Shows `scene` from now on.
 pub fn present(scene: Scene) {
+    on_loop(move || present_here(scene))
+}
+
+fn present_here(scene: Scene) {
     APP.with(|a| {
         if let Some(app) = a.borrow_mut().as_mut() {
             app.scene = scene;
@@ -390,6 +613,10 @@ pub fn present(scene: Scene) {
 }
 
 pub fn request(r: Request) {
+    on_loop(move || request_here(r))
+}
+
+fn request_here(r: Request) {
     APP.with(|a| {
         let mut a = a.borrow_mut();
         let Some(app) = a.as_mut() else { return };
@@ -399,35 +626,35 @@ pub fn request(r: Request) {
                     w.set_title(&t)
                 }
             }
-            Request::SetClipboard(t) => {
-                if let Some(c) = app.clipboard.as_mut() {
-                    let _ = c.set_text(t);
-                }
-            }
-            // Lean checked the link; it is passed as one argument, with no shell.
-            Request::OpenUri(u) => {
-                let _ = std::process::Command::new("xdg-open").arg(u).spawn();
-            }
-            Request::Notify(title, body) => {
-                let _ = std::process::Command::new("notify-send")
-                    .arg("--")
-                    .arg(title)
-                    .arg(body)
-                    .spawn();
-            }
+            Request::SetClipboard(t) => app.clipboard.set(t),
+            Request::OpenUri(u) => open_uri(&u),
+            Request::Notify(title, body) => notify(&title, &body),
             Request::Quit => {
                 app.adapter = None;
                 app.window = None;
                 app.surface = None;
             }
             Request::Ime(area) => {
+                // Only a change: on Android, allowing input shows the soft keyboard anew, which
+                // restarts its connection and loses what is being typed.
+                if area.is_some() != app.ime {
+                    // What was typed before focus left goes to the field it was typed in.
+                    #[cfg(target_os = "android")]
+                    app.read_typed();
+                    app.ime = area.is_some();
+                    #[cfg(target_os = "android")]
+                    app.start_typing();
+                    if let Some(w) = &app.window {
+                        w.set_ime_allowed(app.ime);
+                    }
+                }
                 if let Some(w) = &app.window {
-                    w.set_ime_allowed(area.is_some());
                     if let Some(r) = area {
                         let s = app.scale();
                         let p = |u: i64| u as f64 / crate::render::UNITS as f64 * s;
+                        let (l, t) = (app.inset.0 as f64, app.inset.1 as f64);
                         w.set_ime_cursor_area(
-                            winit::dpi::PhysicalPosition::new(p(r.x0), p(r.y0)),
+                            winit::dpi::PhysicalPosition::new(p(r.x0) + l, p(r.y0) + t),
                             winit::dpi::PhysicalSize::new(
                                 p(r.x1 - r.x0).max(1.0),
                                 p(r.y1 - r.y0).max(1.0),
@@ -450,7 +677,8 @@ pub fn request(r: Request) {
                 }
             }
             Request::Access(focus, nodes) => {
-                let tree = crate::access::update(focus, &nodes, app.scale(), &app.title);
+                let origin = (app.inset.0 as f64, app.inset.1 as f64);
+                let tree = crate::access::update(focus, &nodes, app.scale(), origin, &app.title);
                 app.access = Some(tree.clone());
                 if let Some(a) = app.adapter.as_mut() {
                     a.update_if_active(|| tree);
@@ -462,14 +690,17 @@ pub fn request(r: Request) {
 
 /// The window's size in units, once it is open.
 pub fn size() -> (i64, i64) {
+    on_loop(size_here)
+}
+
+fn size_here() -> (i64, i64) {
     APP.with(|a| {
         let a = a.borrow();
         let Some(app) = a.as_ref() else { return (0, 0) };
-        match &app.window {
-            Some(w) => {
-                let s = w.inner_size();
-                let scale = w.scale_factor();
-                (units(s.width as f64, scale), units(s.height as f64, scale))
+        match app.area() {
+            Some((w, h)) => {
+                let scale = app.scale();
+                (units(w as f64, scale), units(h as f64, scale))
             }
             None => (
                 (app.size.0 as i64) * UNITS as i64,
@@ -481,12 +712,94 @@ pub fn size() -> (i64, i64) {
 
 /// The last frame shown, as PNG.
 pub fn screenshot() -> Vec<u8> {
+    on_loop(screenshot_here)
+}
+
+fn screenshot_here() -> Vec<u8> {
     APP.with(|a| {
         let a = a.borrow();
         let Some(app) = a.as_ref() else { return vec![] };
-        let Some(w) = &app.window else { return vec![] };
-        let s = w.inner_size();
-        let pm = with_text(|t| render(&app.scene, s.width, s.height, w.scale_factor() as f32, t));
+        let Some((w, h)) = app.area() else {
+            return vec![];
+        };
+        let pm = with_text(|t| render(&app.scene, w, h, app.scale() as f32, t));
         pm.encode_png().unwrap_or_default()
     })
+}
+
+fn surface(window: &Rc<Window>) -> Option<softbuffer::Surface<Rc<Window>, Rc<Window>>> {
+    let ctx = softbuffer::Context::new(window.clone()).ok()?;
+    softbuffer::Surface::new(&ctx, window.clone()).ok()
+}
+
+/// Opens a link Lean checked, in the system's browser or mail program.
+fn open_uri(u: &str) {
+    let _ = webbrowser::open(u);
+}
+
+#[cfg(not(target_os = "android"))]
+fn notify(title: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .arg("--")
+        .arg(title)
+        .arg(body)
+        .spawn();
+}
+
+#[cfg(target_os = "android")]
+use crate::android::notify;
+
+#[cfg(target_os = "android")]
+impl App {
+    /// Empties the soft keyboard's buffer for a field that starts taking text, and asks for a
+    /// keyboard whose Enter types a newline, which is passed on as the Enter key.
+    fn start_typing(&mut self) {
+        use winit::platform::android::activity::input::{
+            ImeOptions, InputType, TextInputAction, TextInputState, TextSpan,
+        };
+        let Some(a) = crate::android::app() else {
+            return;
+        };
+        self.typed.reset();
+        a.set_text_input_state(TextInputState {
+            text: String::new(),
+            selection: TextSpan { start: 0, end: 0 },
+            compose_region: None,
+        });
+        if self.ime {
+            a.set_ime_editor_info(
+                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_FLAG_MULTI_LINE,
+                TextInputAction::None,
+                ImeOptions::IME_FLAG_NO_FULLSCREEN,
+            );
+        }
+    }
+
+    fn read_insets(&mut self) {
+        let Some(inset) = crate::android::insets() else {
+            return;
+        };
+        if inset != self.inset {
+            self.inset = inset;
+            self.resize_event();
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+    }
+
+    /// What the soft keyboard typed since the last poll.
+    fn read_typed(&mut self) {
+        if !self.ime {
+            return;
+        }
+        let Some(a) = crate::android::app() else {
+            return;
+        };
+        let state = a.text_input_state();
+        let compose = state.compose_region.map(|r| (r.start, r.end));
+        for kind in self.typed.update(&state.text, compose) {
+            self.input(kind);
+        }
+    }
 }

@@ -6,7 +6,7 @@
 
 use crate::events::AccessNode;
 use crate::render::UNITS;
-use accesskit::{Action, Node, NodeId, Rect, Role, Toggled, Tree, TreeUpdate};
+use accesskit::{Action, Node, NodeId, Rect, Role, Toggled, TreeId, TreeInfo, TreeUpdate};
 
 fn role(r: u64) -> Role {
     match r {
@@ -38,8 +38,14 @@ fn role(r: u64) -> Role {
 }
 
 /// The update for `nodes`, the first of which is the window, at `scale` physical pixels per
-/// logical pixel. `title` names the window when Lean gives it no name.
-pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> TreeUpdate {
+/// logical pixel, with the window's area at `origin`. `title` names the window when Lean gives it no name.
+pub fn update(
+    focus: u64,
+    nodes: &[AccessNode],
+    scale: f64,
+    origin: (f64, f64),
+    title: &str,
+) -> TreeUpdate {
     let px = |u: i64| u as f64 / UNITS as f64 * scale;
     let built = nodes
         .iter()
@@ -76,10 +82,10 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
                 node.add_action(Action::Decrement);
             }
             node.set_bounds(Rect {
-                x0: px(n.bounds.x0),
-                y0: px(n.bounds.y0),
-                x1: px(n.bounds.x1),
-                y1: px(n.bounds.y1),
+                x0: origin.0 + px(n.bounds.x0),
+                y0: origin.1 + px(n.bounds.y0),
+                x1: origin.0 + px(n.bounds.x1),
+                y1: origin.1 + px(n.bounds.y1),
             });
             node.set_children(n.children.iter().map(|c| NodeId(*c)).collect::<Vec<_>>());
             if n.focusable {
@@ -106,7 +112,8 @@ pub fn update(focus: u64, nodes: &[AccessNode], scale: f64, title: &str) -> Tree
     };
     TreeUpdate {
         nodes: built,
-        tree: Some(Tree::new(NodeId(root))),
+        tree: Some(TreeInfo::new(NodeId(root))),
+        tree_id: TreeId::ROOT,
         focus: NodeId(focus),
     }
 }
@@ -130,7 +137,7 @@ pub fn empty(title: &str) -> TreeUpdate {
         },
         children: vec![],
     };
-    update(0, &[window], 1.0, title)
+    update(0, &[window], 1.0, (0.0, 0.0), title)
 }
 
 #[cfg(test)]
@@ -165,7 +172,7 @@ mod tests {
             node(3, 3, "name", Some("Ada"), vec![]),
             node(4, 4, "", Some("secret"), vec![]),
         ];
-        let u = update(3, &nodes, 2.0, "Paw gallery");
+        let u = update(3, &nodes, 2.0, (0.0, 0.0), "Paw gallery");
         assert_eq!(u.nodes.len(), 4);
         assert_eq!(u.focus, NodeId(3));
         assert_eq!(u.tree.as_ref().map(|t| t.root), Some(NodeId(0)));
@@ -188,6 +195,7 @@ mod tests {
                 node(5, 0, "count: 1", None, vec![]),
             ],
             1.0,
+            (0.0, 0.0),
             "t",
         );
         let l = &label.nodes.iter().find(|(n, _)| *n == NodeId(5)).unwrap().1;
@@ -199,6 +207,7 @@ mod tests {
                 node(6, 7, "Clear the list?", None, vec![]),
             ],
             1.0,
+            (0.0, 0.0),
             "t",
         );
         let d = &dlg.nodes.iter().find(|(n, _)| *n == NodeId(6)).unwrap().1;
@@ -210,7 +219,7 @@ mod tests {
     #[test]
     fn unknown_focus_falls_back_to_the_window() {
         assert_eq!(
-            update(99, &[node(0, 6, "", None, vec![])], 1.0, "t").focus,
+            update(99, &[node(0, 6, "", None, vec![])], 1.0, (0.0, 0.0), "t").focus,
             NodeId(0)
         );
         assert_eq!(empty("t").nodes.len(), 1);

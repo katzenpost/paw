@@ -11,8 +11,16 @@
 #   ROOT  the executable's root module (default: GalleryMain)
 #   NAME  the app's Android package name (default: org.katzenpost.paw.gallery)
 #   LABEL the app's name on the launcher (default: Paw gallery)
+#   VERSION_NAME   the version shown to users (default: 0.1.0)
+#   VERSION_CODE   the version Android compares, which an update must not lower (default: 1)
 #   ANDROID_ABI    x86_64 or arm64-v8a (default: x86_64)
 #   ANDROID_HOME   the Android SDK (default: ~/Android/Sdk), with its newest NDK and build-tools
+#   ANDROID_NDK_HOME, BUILD_TOOLS, ANDROID_JAR   the NDK, the build-tools' directory and the
+#                  platform's android.jar, in place of the newest
+#   KEYSTORE, KEYSTORE_PASS, KEY_ALIAS   the key to sign with (default: the debug key, made when
+#                  there is none); with KEYSTORE=none the APK is left unsigned
+#   SOURCE_DATE_EPOCH   when set, the time of every file the APK holds, so that a build can be
+#                  repeated to the same bytes
 #
 # Needs cargo-ndk (`cargo install cargo-ndk`) and the Rust targets of the ABI
 # (`rustup target add x86_64-linux-android aarch64-linux-android`).
@@ -27,6 +35,8 @@ EXE=${EXE:-paw-gallery}
 ROOT=${ROOT:-GalleryMain}
 NAME=${NAME:-org.katzenpost.paw.gallery}
 LABEL=${LABEL:-Paw gallery}
+VERSION_NAME=${VERSION_NAME:-0.1.0}
+VERSION_CODE=${VERSION_CODE:-1}
 ABI=${ANDROID_ABI:-x86_64}
 API=28
 JOBS=${JOBS:-$(nproc)}
@@ -268,8 +278,8 @@ java_libs() {
 
 apk() {
   say "packaging $NAME for $ABI"
-  BT=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
-  JAR=$(ls -d "$SDK"/platforms/android-* | sort -V | tail -1)/android.jar
+  BT=${BUILD_TOOLS:-$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)}
+  JAR=${ANDROID_JAR:-$(ls -d "$SDK"/platforms/android-* | sort -V | tail -1)/android.jar}
   A=$OUT/apk
   rm -rf "$A/res" "$A/gen" "$A/classes" "$A/dex" "$A/jars"
   mkdir -p "$A/res" "$A/gen" "$A/classes" "$A/dex" "$A/jars"
@@ -295,27 +305,38 @@ apk() {
   sed -e "s|@NAME@|$NAME|" -e "s|@LABEL@|$LABEL|" "$PAW/android/AndroidManifest.xml" > "$A/AndroidManifest.xml"
   # shellcheck disable=SC2046
   "$BT/aapt2" link -I "$JAR" --manifest "$A/AndroidManifest.xml" -o "$A/base.apk" \
-    --min-sdk-version $API --target-sdk-version 34 --version-code 1 --version-name 0.1.0 \
+    --min-sdk-version $API --target-sdk-version 34 --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
     --auto-add-overlay --extra-packages "$packages" --java "$A/gen" $(for r in "$A"/res/*.zip; do echo -R "$r"; done)
   javac -nowarn --release 11 -cp "$JAR" -d "$A/classes" $(find "$A/gen" -name '*.java')
   # shellcheck disable=SC2046
   "$BT/d8" --release --min-api $API --lib "$JAR" --output "$A/dex" \
     $(find "$A/classes" -name '*.class') "$A"/jars/*.jar
   cp "$A/base.apk" "$A/unsigned.apk"
-  (cd "$A/dex" && zip -q "$A/unsigned.apk" classes*.dex)
-  # Stored, so the library is loaded straight from the APK.
-  (cd "$A" && zip -q -0 "$A/unsigned.apk" "lib/$ABI/libmain.so")
-  "$BT/zipalign" -f -P 16 4 "$A/unsigned.apk" "$A/aligned.apk"
-  # Signed with the debug key, which Android's tools make when a machine first needs one.
-  KEYSTORE=$HOME/.android/debug.keystore
-  if [ ! -f "$KEYSTORE" ]; then
-    mkdir -p "$HOME/.android"
-    keytool -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
-      -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-      -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+  if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    find "$A/dex" "$A/lib" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
   fi
-  "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android \
-    --ks-key-alias androiddebugkey --out "$WORK/$EXE-$ABI.apk" "$A/aligned.apk"
+  (cd "$A/dex" && zip -q -X "$A/unsigned.apk" classes*.dex)
+  # Stored, so the library is loaded straight from the APK.
+  (cd "$A" && zip -q -X -0 "$A/unsigned.apk" "lib/$ABI/libmain.so")
+  "$BT/zipalign" -f -P 16 4 "$A/unsigned.apk" "$A/aligned.apk"
+  if [ "${KEYSTORE:-}" = none ]; then
+    cp "$A/aligned.apk" "$WORK/$EXE-$ABI-unsigned.apk"
+    ls -la "$WORK/$EXE-$ABI-unsigned.apk"
+    return
+  fi
+  # Without a key given, the debug key, which Android's tools make when a machine first needs one.
+  if [ -z "${KEYSTORE:-}" ]; then
+    KEYSTORE=$HOME/.android/debug.keystore KEYSTORE_PASS=android KEY_ALIAS=androiddebugkey
+    if [ ! -f "$KEYSTORE" ]; then
+      mkdir -p "$HOME/.android"
+      keytool -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android \
+        -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+        -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+    fi
+  fi
+  export KEYSTORE_PASS
+  "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass env:KEYSTORE_PASS \
+    --ks-key-alias "$KEY_ALIAS" --out "$WORK/$EXE-$ABI.apk" "$A/aligned.apk"
   ls -la "$WORK/$EXE-$ABI.apk"
 }
 

@@ -15,8 +15,20 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/paw-e2e.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 FAILED=0
 
+# On a failure, what the screen held: with SHOTS set, a picture of it there too.
+SHOTS=${SHOTS:-}
 ok() { echo "ok   $1"; }
-fail() { echo "FAIL $1"; FAILED=1; }
+fail() {
+  echo "FAIL $1"
+  FAILED=1
+  adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | sed 's/^ */     /'
+  adb shell dumpsys input_method | grep -E 'mInputShown' | sed 's/^ */     /'
+  adb logcat -d -t 20 --pid="$(adb shell pidof $PKG)" 2>/dev/null | sed 's/^/     /'
+  if [ -n "$SHOTS" ]; then
+    mkdir -p "$SHOTS"
+    adb exec-out screencap -p > "$SHOTS/$(echo "$1" | tr -c 'a-zA-Z0-9\n' '-').png"
+  fi
+}
 
 adb root >/dev/null
 adb wait-for-device
@@ -58,15 +70,22 @@ ok "the gallery reported its layout"
 
 # Where the window's area starts on the screen, from the accessibility tree the gallery gives
 # Android; turning the screen moves it. Android asks the app for its tree only once a client
-# connects, so the first dump may come before it.
+# connects, so the first dump may come before it; on a freshly booted emulator the dump can also
+# fail for a while, until the system is idle.
 origin() {
   n=0
   while :; do
-    adb shell uiautomator dump /sdcard/paw-ui.xml >/dev/null 2>&1
-    adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml"
+    adb shell rm -f /sdcard/paw-ui.xml
+    adb shell uiautomator dump /sdcard/paw-ui.xml > "$WORK/dump.txt" 2>&1
+    adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml" 2>/dev/null
     grep -q 'content-desc="Paw gallery"' "$WORK/ui.xml" && break
     n=$((n + 1))
-    if [ $n -gt 10 ]; then fail "the window is in Android's accessibility tree"; exit 1; fi
+    if [ $n -gt 60 ]; then
+      fail "the window is in Android's accessibility tree"
+      cat "$WORK/dump.txt"
+      grep -o '\(text\|content-desc\|package\)="[^"]*"' "$WORK/ui.xml" | sort -u | head -40
+      exit 1
+    fi
     sleep 1
   done
   set -- $(sed -n 's/.*content-desc="Paw gallery"[^>]*bounds="\[\([0-9]*\),\([0-9]*\)\].*/\1 \2/p' "$WORK/ui.xml")
@@ -97,6 +116,21 @@ tap() {
   sleep 0.3
 }
 
+# Waits until the widget with a key has kept its box in the layout for a second, longer than the
+# router's 500 ms.
+settle() {
+  prev=
+  n=0
+  while :; do
+    cur=$(adb exec-out cat $FILES/layout.txt 2>/dev/null | awk -v k="$1" '$1 == k')
+    [ -n "$cur" ] && [ "$cur" = "$prev" ] && return
+    prev=$cur
+    n=$((n + 1))
+    if [ $n -gt 20 ]; then fail "$1 comes to rest"; return; fi
+    sleep 1
+  done
+}
+
 # Widgets must have been still for the router's 500 ms before a tap designates them.
 sleep 1
 tap inc
@@ -114,8 +148,8 @@ adb shell input text plums
 tap add
 expect "plums" "an item is added"
 # Over adb a tap takes longer than the router's 500 ms, so that a tap on a widget that just moved
-# designates nothing is tested in process and on X11 instead.
-sleep 0.6
+# designates nothing is tested in process and on X11 instead. Adding the item moved the link.
+settle link
 tap link
 expect "opened=1" "a real tap opens the link"
 if adb logcat -d | grep -q "act=android.intent.action.VIEW dat=https://github.com/"; then
@@ -165,6 +199,8 @@ d=open(sys.argv[1],"rb").read(); print(len(set(d[i] for i in range(len(d)//2, le
 if [ "$colours" -gt 4 ]; then ok "it draws again when it comes back"; else fail "it draws again when it comes back"; fi
 expect "count=2 .*plums" "with its model kept"
 
+# Coming back lays the window out again.
+settle load
 tap load
 expect "picture=true" "a task's picture is shown"
 # The Lists tab is wider than a phone held upright; turning it lays the gallery out again.

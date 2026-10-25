@@ -6,9 +6,9 @@ Paw is a GUI library for Lean in the Elm style: an app is a model, an `update` t
 
 It runs on Linux desktop, on X11 and Wayland, with a platform layer in Rust.
 
-[glint](https://github.com/katzenpost/glint), a group chat over the Katzenpost mixnet, is written with Paw:
+What Paw can draw:
 
-![glint, drawn by Paw: groups on the left, a conversation in the middle, members on the right](docs/glint.png)
+![A window drawn by Paw: a list on the left, a conversation in the middle, a list of people on the right](docs/screenshot.png)
 
 ## Dependencies
 

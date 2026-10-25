@@ -15,8 +15,20 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/paw-e2e.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 FAILED=0
 
+# On a failure, what the screen held: with SHOTS set, a picture of it there too.
+SHOTS=${SHOTS:-}
 ok() { echo "ok   $1"; }
-fail() { echo "FAIL $1"; FAILED=1; }
+fail() {
+  echo "FAIL $1"
+  FAILED=1
+  adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | sed 's/^ */     /'
+  adb shell dumpsys input_method | grep -E 'mInputShown' | sed 's/^ */     /'
+  adb logcat -d -t 20 --pid="$(adb shell pidof $PKG)" 2>/dev/null | sed 's/^/     /'
+  if [ -n "$SHOTS" ]; then
+    mkdir -p "$SHOTS"
+    adb exec-out screencap -p > "$SHOTS/$(echo "$1" | tr -c 'a-zA-Z0-9\n' '-').png"
+  fi
+}
 
 adb root >/dev/null
 adb wait-for-device

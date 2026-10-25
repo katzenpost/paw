@@ -10,6 +10,7 @@ use crate::events::{Button, Input, InputKind, Key, Mods, Request, WindowEvent};
 use crate::render::{render, UNITS};
 use crate::scene::Scene;
 use crate::text::with_text;
+use crate::touch::{Phase, Touch};
 use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -62,7 +63,12 @@ struct App {
     mods: Mods,
     cursor: (i64, i64),
     scene: Scene,
-    clipboard: Option<arboard::Clipboard>,
+    clipboard: Clipboard,
+    touch: Touch,
+    /// What the soft keyboard has typed, on Android, where it edits a buffer of its own.
+    #[cfg(target_os = "android")]
+    typed: crate::textinput::TextInput,
+    ime: bool,
     proxy: EventLoopProxy<UserEvent>,
     adapter: Option<accesskit_winit::Adapter>,
     /// The last accessibility tree from Lean, for a screen reader that asks for it.
@@ -74,6 +80,41 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
+/// The system clipboard, read only when the user pastes.
+#[cfg(not(target_os = "android"))]
+struct Clipboard(Option<arboard::Clipboard>);
+
+#[cfg(not(target_os = "android"))]
+impl Clipboard {
+    fn new() -> Clipboard {
+        Clipboard(arboard::Clipboard::new().ok())
+    }
+    fn get(&mut self) -> Option<String> {
+        self.0.as_mut().and_then(|c| c.get_text().ok())
+    }
+    fn set(&mut self, t: String) {
+        if let Some(c) = self.0.as_mut() {
+            let _ = c.set_text(t);
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+struct Clipboard;
+
+#[cfg(target_os = "android")]
+impl Clipboard {
+    fn new() -> Clipboard {
+        Clipboard
+    }
+    fn get(&mut self) -> Option<String> {
+        crate::android::clipboard()
+    }
+    fn set(&mut self, t: String) {
+        crate::android::set_clipboard(&t)
+    }
+}
+
 fn units(v: f64, scale: f64) -> i64 {
     (v / scale * UNITS as f64).round() as i64
 }
@@ -82,7 +123,7 @@ fn key_of(k: &WKey) -> Option<Key> {
     Some(match k {
         WKey::Named(n) => match n {
             NamedKey::Enter => Key::Enter,
-            NamedKey::Escape => Key::Escape,
+            NamedKey::Escape | NamedKey::GoBack | NamedKey::BrowserBack => Key::Escape,
             NamedKey::Backspace => Key::Backspace,
             NamedKey::Tab => Key::Tab,
             NamedKey::Delete => Key::Delete,
@@ -156,7 +197,18 @@ impl App {
 
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        if self.window.is_some() {
+        // Android takes the surface away while the app is in the background.
+        if let Some(window) = self.window.clone() {
+            if self.surface.is_none() {
+                self.surface = surface(&window);
+                let s = window.inner_size();
+                let scale = window.scale_factor();
+                self.events.push(WindowEvent::Resize(
+                    units(s.width as f64, scale),
+                    units(s.height as f64, scale),
+                ));
+                window.request_redraw();
+            }
             return;
         }
         // AccessKit must be attached before the window is first shown.
@@ -174,9 +226,7 @@ impl ApplicationHandler<UserEvent> for App {
         ));
         window.set_visible(true);
         let window = Rc::new(window);
-        if let Ok(ctx) = softbuffer::Context::new(window.clone()) {
-            self.surface = softbuffer::Surface::new(&ctx, window.clone()).ok();
-        }
+        self.surface = surface(&window);
         let s = window.inner_size();
         let scale = window.scale_factor();
         self.events.push(WindowEvent::Resize(
@@ -184,6 +234,10 @@ impl ApplicationHandler<UserEvent> for App {
             units(s.height as f64, scale),
         ));
         self.window = Some(window);
+    }
+
+    fn suspended(&mut self, _el: &ActiveEventLoop) {
+        self.surface = None;
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, event: UserEvent) {
@@ -255,6 +309,21 @@ impl ApplicationHandler<UserEvent> for App {
                 self.input(InputKind::Move(self.cursor.0, self.cursor.1));
             }
             WE::CursorLeft { .. } => self.input(InputKind::LeaveWindow),
+            WE::Touch(t) => {
+                let phase = match t.phase {
+                    winit::event::TouchPhase::Started => Phase::Started,
+                    winit::event::TouchPhase::Moved => Phase::Moved,
+                    winit::event::TouchPhase::Ended => Phase::Ended,
+                    winit::event::TouchPhase::Cancelled => Phase::Cancelled,
+                };
+                let (x, y) = (units(t.location.x, scale), units(t.location.y, scale));
+                for kind in self.touch.event(t.id, phase, x, y) {
+                    if let InputKind::Move(x, y) = kind {
+                        self.cursor = (x, y);
+                    }
+                    self.input(kind);
+                }
+            }
             WE::MouseInput { state, button, .. } => {
                 let b = match button {
                     MouseButton::Left => Button::Primary,
@@ -295,11 +364,7 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 };
                 if pressed && m.ctrl && !m.alt && k == Key::Char('v') {
-                    let text = self
-                        .clipboard
-                        .as_mut()
-                        .and_then(|c| c.get_text().ok())
-                        .unwrap_or_default();
+                    let text = self.clipboard.get().unwrap_or_default();
                     self.input(InputKind::Paste(text));
                     return;
                 }
@@ -322,8 +387,17 @@ impl ApplicationHandler<UserEvent> for App {
 pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
     // Lean runs `main` on a thread of its own; every use of the loop stays on that thread.
     let mut builder = EventLoop::<UserEvent>::with_user_event();
-    winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
-    winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    #[cfg(not(target_os = "android"))]
+    {
+        winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
+        winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    }
+    #[cfg(target_os = "android")]
+    {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        let app = crate::android::app().ok_or("paw: not started by android_main")?;
+        builder.with_android_app(app);
+    }
     let el = builder.build().map_err(|e| e.to_string())?;
     let proxy = el.create_proxy();
     match WAKER.get() {
@@ -337,7 +411,7 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
         }
     }
     with_text(|t| t.load_system_fonts());
-    let clipboard = arboard::Clipboard::new().ok();
+    let clipboard = Clipboard::new();
     LOOP.with(|l| *l.borrow_mut() = Some(el));
     APP.with(|a| {
         *a.borrow_mut() = Some(App {
@@ -350,6 +424,10 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
             cursor: (0, 0),
             scene: Scene::default(),
             clipboard,
+            touch: Touch::default(),
+            #[cfg(target_os = "android")]
+            typed: Default::default(),
+            ime: false,
             proxy,
             adapter: None,
             access: None,
@@ -374,6 +452,8 @@ pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
             if let PumpStatus::Exit(_) = status {
                 app.events.push(WindowEvent::Close);
             }
+            #[cfg(target_os = "android")]
+            app.read_typed();
             std::mem::take(&mut app.events)
         })
     })
@@ -399,28 +479,20 @@ pub fn request(r: Request) {
                     w.set_title(&t)
                 }
             }
-            Request::SetClipboard(t) => {
-                if let Some(c) = app.clipboard.as_mut() {
-                    let _ = c.set_text(t);
-                }
-            }
-            // Lean checked the link; it is passed as one argument, with no shell.
-            Request::OpenUri(u) => {
-                let _ = std::process::Command::new("xdg-open").arg(u).spawn();
-            }
-            Request::Notify(title, body) => {
-                let _ = std::process::Command::new("notify-send")
-                    .arg("--")
-                    .arg(title)
-                    .arg(body)
-                    .spawn();
-            }
+            Request::SetClipboard(t) => app.clipboard.set(t),
+            Request::OpenUri(u) => open_uri(&u),
+            Request::Notify(title, body) => notify(&title, &body),
             Request::Quit => {
                 app.adapter = None;
                 app.window = None;
                 app.surface = None;
             }
             Request::Ime(area) => {
+                if area.is_some() != app.ime {
+                    app.ime = area.is_some();
+                    #[cfg(target_os = "android")]
+                    app.start_typing();
+                }
                 if let Some(w) = &app.window {
                     w.set_ime_allowed(area.is_some());
                     if let Some(r) = area {
@@ -489,4 +561,69 @@ pub fn screenshot() -> Vec<u8> {
         let pm = with_text(|t| render(&app.scene, s.width, s.height, w.scale_factor() as f32, t));
         pm.encode_png().unwrap_or_default()
     })
+}
+
+fn surface(window: &Rc<Window>) -> Option<softbuffer::Surface<Rc<Window>, Rc<Window>>> {
+    let ctx = softbuffer::Context::new(window.clone()).ok()?;
+    softbuffer::Surface::new(&ctx, window.clone()).ok()
+}
+
+// Lean checked the link; it is passed as one argument, with no shell.
+#[cfg(not(target_os = "android"))]
+fn open_uri(u: &str) {
+    let _ = std::process::Command::new("xdg-open").arg(u).spawn();
+}
+
+#[cfg(not(target_os = "android"))]
+fn notify(title: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .arg("--")
+        .arg(title)
+        .arg(body)
+        .spawn();
+}
+
+#[cfg(target_os = "android")]
+use crate::android::{notify, open_uri};
+
+#[cfg(target_os = "android")]
+impl App {
+    /// Empties the soft keyboard's buffer for a field that starts taking text, and asks for a
+    /// keyboard whose Enter types a newline, which is passed on as the Enter key.
+    fn start_typing(&mut self) {
+        use winit::platform::android::activity::input::{
+            ImeOptions, InputType, TextInputAction, TextInputState, TextSpan,
+        };
+        let Some(a) = crate::android::app() else {
+            return;
+        };
+        self.typed.reset();
+        a.set_text_input_state(TextInputState {
+            text: String::new(),
+            selection: TextSpan { start: 0, end: 0 },
+            compose_region: None,
+        });
+        if self.ime {
+            a.set_ime_editor_info(
+                InputType::TYPE_CLASS_TEXT | InputType::TYPE_TEXT_FLAG_MULTI_LINE,
+                TextInputAction::None,
+                ImeOptions::IME_FLAG_NO_FULLSCREEN,
+            );
+        }
+    }
+
+    /// What the soft keyboard typed since the last poll.
+    fn read_typed(&mut self) {
+        if !self.ime {
+            return;
+        }
+        let Some(a) = crate::android::app() else {
+            return;
+        };
+        let state = a.text_input_state();
+        let compose = state.compose_region.map(|r| (r.start, r.end));
+        for kind in self.typed.update(&state.text, compose) {
+            self.input(kind);
+        }
+    }
 }

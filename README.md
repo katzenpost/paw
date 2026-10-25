@@ -10,6 +10,10 @@ What Paw can draw:
 
 ![A window drawn by Paw: a list on the left, a conversation in the middle, a list of people on the right](docs/screenshot.png)
 
+And the same app on an Android phone, where it shows one pane at a time:
+
+<img src="docs/phone.png" width="320" alt="The same app drawn by Paw on an Android phone: a group conversation, with the message box and a Send button below it">
+
 ## Dependencies
 
 Paw builds with Lean 4 (the version in `lean-toolchain`, from [elan](https://github.com/leanprover/elan)) and Rust (from [rustup](https://rustup.rs)). Lake builds the Rust crate in `rust/` with cargo and links it into each executable, so neither needs setting up by hand beyond installing the toolchains.

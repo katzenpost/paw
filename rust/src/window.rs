@@ -167,9 +167,51 @@ fn key_of(k: &WKey) -> Option<Key> {
             NamedKey::F12 => Key::F(12),
             _ => return None,
         },
-        WKey::Character(s) => Key::Char(s.chars().next()?.to_lowercase().next()?),
+        // Some Android versions give keys such as Enter as the character they type.
+        WKey::Character(s) => match s.chars().next()? {
+            '\n' | '\r' => Key::Enter,
+            '\t' => Key::Tab,
+            '\u{8}' => Key::Backspace,
+            '\u{1b}' => Key::Escape,
+            '\u{7f}' => Key::Delete,
+            c if c.is_control() => return None,
+            c => Key::Char(c.to_lowercase().next()?),
+        },
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn char_key(s: &str) -> Option<Key> {
+        key_of(&WKey::Character(s.into()))
+    }
+
+    #[test]
+    fn named_keys() {
+        assert_eq!(key_of(&WKey::Named(NamedKey::Enter)), Some(Key::Enter));
+        assert_eq!(key_of(&WKey::Named(NamedKey::GoBack)), Some(Key::Escape));
+        assert_eq!(key_of(&WKey::Named(NamedKey::Space)), Some(Key::Char(' ')));
+    }
+
+    #[test]
+    fn characters_are_lowercased() {
+        assert_eq!(char_key("V"), Some(Key::Char('v')));
+        assert_eq!(char_key("é"), Some(Key::Char('é')));
+    }
+
+    #[test]
+    fn control_characters_are_their_keys() {
+        assert_eq!(char_key("\n"), Some(Key::Enter));
+        assert_eq!(char_key("\r"), Some(Key::Enter));
+        assert_eq!(char_key("\t"), Some(Key::Tab));
+        assert_eq!(char_key("\u{8}"), Some(Key::Backspace));
+        assert_eq!(char_key("\u{1b}"), Some(Key::Escape));
+        assert_eq!(char_key("\u{7f}"), Some(Key::Delete));
+        assert_eq!(char_key("\u{0}"), None);
+    }
 }
 
 impl App {

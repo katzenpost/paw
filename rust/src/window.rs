@@ -408,7 +408,9 @@ impl ApplicationHandler<UserEvent> for App {
                     winit::event::TouchPhase::Cancelled => Phase::Cancelled,
                 };
                 let (x, y) = self.point(t.location.x, t.location.y);
-                for kind in self.touch.event(t.id, phase, x, y) {
+                let kinds = self.touch.event(t.id, phase, x, y);
+                eprintln!("paw-touch id={} {:?} ({},{}) -> {:?}", t.id, phase, x, y, kinds);
+                for kind in kinds {
                     if let InputKind::Move(x, y) = kind {
                         self.cursor = (x, y);
                     }

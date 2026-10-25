@@ -201,8 +201,15 @@ expect "count=2 .*plums" "with its model kept"
 
 # Coming back lays the window out again.
 settle load
+adb logcat -c
 tap load
 expect "picture=true" "a task's picture is shown"
+adb logcat -d | grep -E "paw-touch|threaded_app" | sed 's/^/     /'
+if ! last | grep -q "picture=true"; then
+  tap load
+  expect "picture=true" "DIAG a second tap loads it"
+  adb logcat -d | grep -E "paw-touch" | sed 's/^/     /'
+fi
 # The Lists tab is wider than a phone held upright; turning it lays the gallery out again.
 tap tab-Lists
 AUTO_ROTATE=$(adb shell settings get system accelerometer_rotation)

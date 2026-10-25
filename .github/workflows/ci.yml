@@ -57,3 +57,50 @@ jobs:
         with:
           name: goldens-actual
           path: tests/goldens/actual/
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ELAN_VERSION: 4.2.4
+      ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
+    steps:
+      - uses: actions/checkout@v4
+      - name: let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: install elan
+        run: |
+          curl -fsSLO "https://github.com/leanprover/elan/releases/download/v${ELAN_VERSION}/elan-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ELAN_SHA256}  elan-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c -
+          tar -xzf elan-x86_64-unknown-linux-gnu.tar.gz
+          ./elan-init -y --default-toolchain none --no-modify-path
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - run: elan toolchain install "$(cat lean-toolchain)"
+      - run: |
+          cd rust && rustup toolchain install
+          rustup target add x86_64-linux-android aarch64-linux-android
+          cargo install --locked cargo-ndk@4.1.2
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .lake
+            rust/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: android-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'rust/Cargo.lock', 'rust/rust-toolchain.toml', 'android/deps.lock') }}
+          restore-keys: android-
+      - name: build the APKs
+        run: |
+          make apk ANDROID_ABI=x86_64
+          make apk ANDROID_ABI=arm64-v8a
+      - name: drive the gallery on an emulator
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: sh tests/e2e/android.sh

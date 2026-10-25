@@ -11,6 +11,8 @@
 #   ROOT  the executable's root module (default: GalleryMain)
 #   NAME  the app's Android package name (default: org.katzenpost.paw.gallery)
 #   LABEL the app's name on the launcher (default: Paw gallery)
+#   PERMISSIONS    Android permissions the app asks for besides the network and notifications,
+#                  such as RECORD_AUDIO, separated by spaces (default: none)
 #   VERSION_NAME   the version shown to users (default: 0.1.0)
 #   VERSION_CODE   the version Android compares, which an update must not lower (default: 1)
 #   ANDROID_ABI    x86_64 or arm64-v8a (default: x86_64)
@@ -35,6 +37,7 @@ EXE=${EXE:-paw-gallery}
 ROOT=${ROOT:-GalleryMain}
 NAME=${NAME:-org.katzenpost.paw.gallery}
 LABEL=${LABEL:-Paw gallery}
+PERMISSIONS=${PERMISSIONS:-}
 VERSION_NAME=${VERSION_NAME:-0.1.0}
 VERSION_CODE=${VERSION_CODE:-1}
 ABI=${ANDROID_ABI:-x86_64}
@@ -302,7 +305,9 @@ apk() {
       *.jar) cp "$f" "$A/jars/$base" ;;
     esac
   done
-  sed -e "s|@NAME@|$NAME|" -e "s|@LABEL@|$LABEL|" "$PAW/android/AndroidManifest.xml" > "$A/AndroidManifest.xml"
+  uses=$(for p in $PERMISSIONS; do printf '<uses-permission android:name="android.permission.%s" />' "$p"; done)
+  sed -e "s|@NAME@|$NAME|" -e "s|@LABEL@|$LABEL|" -e "s|@PERMISSIONS@|$uses|" \
+    "$PAW/android/AndroidManifest.xml" > "$A/AndroidManifest.xml"
   # shellcheck disable=SC2046
   "$BT/aapt2" link -I "$JAR" --manifest "$A/AndroidManifest.xml" -o "$A/base.apk" \
     --min-sdk-version $API --target-sdk-version 34 --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \

@@ -37,6 +37,23 @@ pub extern "C" fn paw_is_android(_unit: *mut lean_object) -> u8 {
     cfg!(target_os = "android") as u8
 }
 
+/// Whether the app holds an Android permission, asking the user for it when it does not; off
+/// Android, always.
+#[no_mangle]
+pub unsafe extern "C" fn paw_permission(
+    name: b_lean_obj_arg,
+    _world: lean_obj_arg,
+) -> lean_obj_res {
+    #[cfg(target_os = "android")]
+    let held = android::permission(&string_of(name));
+    #[cfg(not(target_os = "android"))]
+    let held = {
+        let _ = name;
+        true
+    };
+    io_ok(lean_box(held as usize))
+}
+
 /// The bytes of a borrowed Lean `ByteArray`.
 pub unsafe fn bytes_of<'a>(a: b_lean_obj_arg) -> &'a [u8] {
     std::slice::from_raw_parts(lean_sarray_cptr(a as *mut _), lean_sarray_size(a))

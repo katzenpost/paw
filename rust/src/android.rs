@@ -240,28 +240,41 @@ pub fn insets() -> Option<(u32, u32, u32, u32)> {
     .flatten()
 }
 
+/// Whether the app holds a permission; without it, asks the user for it, who answers later.
+fn held_or_ask(env: &mut JNIEnv, activity: &JObject, name: &str) -> jni::errors::Result<bool> {
+    let perm = env.new_string(name)?;
+    let granted = env
+        .call_method(
+            activity,
+            "checkSelfPermission",
+            "(Ljava/lang/String;)I",
+            &[JValue::Object(&perm)],
+        )?
+        .i()?
+        == 0;
+    if !granted {
+        let perms = env.new_object_array(1, "java/lang/String", &perm)?;
+        env.call_method(
+            activity,
+            "requestPermissions",
+            "([Ljava/lang/String;I)V",
+            &[JValue::Object(&perms), JValue::Int(1)],
+        )?;
+    }
+    Ok(granted)
+}
+
+/// Whether the app holds a permission, such as `android.permission.RECORD_AUDIO`; without it,
+/// asks the user for it.
+pub fn permission(name: &str) -> bool {
+    with_activity(|env, activity| held_or_ask(env, activity, name)).unwrap_or(false)
+}
+
 /// Shows a notification. Without permission to, asks for it, and this one is not shown.
 pub fn notify(title: &str, body: &str) {
     static NEXT: AtomicI32 = AtomicI32::new(1);
     with_activity(|env, activity| {
-        let perm = env.new_string("android.permission.POST_NOTIFICATIONS")?;
-        let granted = env
-            .call_method(
-                activity,
-                "checkSelfPermission",
-                "(Ljava/lang/String;)I",
-                &[JValue::Object(&perm)],
-            )?
-            .i()?
-            == 0;
-        if !granted {
-            let perms = env.new_object_array(1, "java/lang/String", &perm)?;
-            env.call_method(
-                activity,
-                "requestPermissions",
-                "([Ljava/lang/String;I)V",
-                &[JValue::Object(&perms), JValue::Int(1)],
-            )?;
+        if !held_or_ask(env, activity, "android.permission.POST_NOTIFICATIONS")? {
             return Ok(());
         }
         let service = env.new_string("notification")?;

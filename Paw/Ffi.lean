@@ -21,6 +21,10 @@ def abiMatches : Bool := rustAbiVersion () == abiVersion
 /-- Whether the Rust layer was built for Android. -/
 @[extern "paw_is_android"] opaque isAndroid : Unit → Bool
 
+/-- Whether the app holds an Android permission, asking the user for it when it does not; off
+Android, always. -/
+@[extern "paw_permission"] opaque permission : @& String → IO Bool
+
 /-- The Rust layer decodes a scene and encodes it again; empty if it does not decode. -/
 @[extern "paw_scene_echo"] opaque sceneEcho : @& ByteArray → ByteArray
 

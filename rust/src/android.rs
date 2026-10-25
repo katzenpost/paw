@@ -88,6 +88,26 @@ fn test_hooks(files: Option<&std::path::Path>) {
     }
 }
 
+/// The local time zone, as Lean's `Std.Time` reads it: Android has no `/etc/localtime`, so the zone's
+/// file is taken from Android's own database and named by `TZ`. It is written under `zoneinfo/`, so
+/// the zone keeps its name, such as Europe/Berlin.
+fn local_zone(files: &std::path::Path) {
+    let Ok(name) = iana_time_zone::get_timezone() else {
+        return;
+    };
+    let Ok(tzif) = android_tzdata::find_tz_data(&name) else {
+        return;
+    };
+    let path = files.join("zoneinfo").join(&name);
+    let written = path
+        .parent()
+        .is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+        && std::fs::write(&path, tzif).is_ok();
+    if written {
+        std::env::set_var("TZ", &path);
+    }
+}
+
 type Job = Box<dyn FnOnce() + Send>;
 
 static JOBS: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
@@ -124,6 +144,7 @@ fn android_main(app: AndroidApp) {
     if let Some(dir) = &files {
         let _ = std::env::set_current_dir(dir);
         std::env::set_var("HOME", dir);
+        local_zone(dir);
     }
     test_hooks(files.as_deref());
     keys_to_native();

@@ -32,6 +32,16 @@ center() {
   awk -v k="$1" '$1 == k { printf "%d %d\n", ($2 + $4) / 2, ($3 + $5) / 2 }' "$LAYOUT"
 }
 
+# Waits up to 2 s for the widget with a key to leave where it was, given as `center` said.
+wait_moved() {
+  i=0
+  while [ "$(center "$1")" = "$2" ]; do
+    i=$((i + 1))
+    if [ $i -gt 100 ]; then return 1; fi
+    sleep 0.02
+  done
+}
+
 # The gallery's CPU time so far, in clock ticks.
 cpu_ticks() {
   awk '{ print $14 + $15 }' "/proc/$GALLERY_PID/stat"

@@ -58,15 +58,22 @@ ok "the gallery reported its layout"
 
 # Where the window's area starts on the screen, from the accessibility tree the gallery gives
 # Android; turning the screen moves it. Android asks the app for its tree only once a client
-# connects, so the first dump may come before it.
+# connects, so the first dump may come before it; on a freshly booted emulator the dump can also
+# fail for a while, until the system is idle.
 origin() {
   n=0
   while :; do
-    adb shell uiautomator dump /sdcard/paw-ui.xml >/dev/null 2>&1
-    adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml"
+    adb shell rm -f /sdcard/paw-ui.xml
+    adb shell uiautomator dump /sdcard/paw-ui.xml > "$WORK/dump.txt" 2>&1
+    adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml" 2>/dev/null
     grep -q 'content-desc="Paw gallery"' "$WORK/ui.xml" && break
     n=$((n + 1))
-    if [ $n -gt 10 ]; then fail "the window is in Android's accessibility tree"; exit 1; fi
+    if [ $n -gt 60 ]; then
+      fail "the window is in Android's accessibility tree"
+      cat "$WORK/dump.txt"
+      grep -o '\(text\|content-desc\|package\)="[^"]*"' "$WORK/ui.xml" | sort -u | head -40
+      exit 1
+    fi
     sleep 1
   done
   set -- $(sed -n 's/.*content-desc="Paw gallery"[^>]*bounds="\[\([0-9]*\),\([0-9]*\)\].*/\1 \2/p' "$WORK/ui.xml")

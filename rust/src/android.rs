@@ -126,6 +126,7 @@ fn android_main(app: AndroidApp) {
         std::env::set_var("HOME", dir);
     }
     test_hooks(files.as_deref());
+    keys_to_native();
     let (tx, rx) = mpsc::channel::<Job>();
     let _ = JOBS.set(Mutex::new(tx));
     std::thread::spawn(|| {
@@ -155,6 +156,28 @@ fn with_activity<R>(f: impl FnOnce(&mut JNIEnv, &JObject) -> jni::errors::Result
         let _ = env.exception_clear();
     }
     r.ok()
+}
+
+/// Sends the keys of a hardware keyboard to native code, where winit reads them with their text.
+/// GameTextInput otherwise takes them to edit its buffer itself, and drops and repeats characters
+/// that come quickly; it is left the soft keyboard's text, which comes as edits.
+fn keys_to_native() {
+    with_activity(|env, activity| {
+        let view = env
+            .get_field(
+                activity,
+                "mSurfaceView",
+                "Lcom/google/androidgamesdk/GameActivity$InputEnabledSurfaceView;",
+            )?
+            .l()?;
+        env.call_method(
+            &view,
+            "setOnKeyListener",
+            "(Landroid/view/View$OnKeyListener;)V",
+            &[JValue::Object(&JObject::null())],
+        )?;
+        Ok(())
+    });
 }
 
 /// The edges of the window that the system's bars, the display's cutout and the soft keyboard

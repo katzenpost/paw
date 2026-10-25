@@ -4,7 +4,7 @@
 # Rust comes from rustup and Lean from elan.
 export PATH := $(HOME)/.cargo/bin:$(HOME)/.elan/bin:$(PATH)
 
-.PHONY: demo all ci docs build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland e2e-atspi bench bench-lean bench-rust
+.PHONY: demo all ci docs build test test-lean test-rust coverage check goldens goldens-update e2e e2e-x11 e2e-wayland e2e-atspi bench bench-lean bench-rust apk android-run e2e-android
 
 all: test coverage goldens
 
@@ -75,3 +75,19 @@ docs:
 demo:
 	lake build paw-gallery
 	.lake/build/bin/paw-gallery
+
+# The gallery as an Android APK, in .lake/android; ANDROID_ABI is x86_64 (the default, for the
+# emulator) or arm64-v8a (for phones). See android/build.sh for building another app.
+ANDROID_ABI ?= x86_64
+
+apk:
+	ANDROID_ABI=$(ANDROID_ABI) sh android/build.sh
+
+# The gallery on the connected Android device or emulator, with its log.
+android-run: apk
+	adb install -r .lake/android/paw-gallery-$(ANDROID_ABI).apk
+	adb shell am start -n org.katzenpost.paw.gallery/com.google.androidgamesdk.GameActivity
+	adb logcat -s paw
+
+e2e-android: apk
+	APK=.lake/android/paw-gallery-$(ANDROID_ABI).apk sh tests/e2e/android.sh

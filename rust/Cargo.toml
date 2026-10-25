@@ -10,8 +10,8 @@ name = "paw_ffi"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-accesskit = "0.21"
-accesskit_winit = "0.29.2"
+accesskit = "0.25.1"
+accesskit_winit = "0.34.1"
 cosmic-text = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 lean-sys = { git = "https://github.com/katzenpost/lean-sys", rev = "c6b51a80e302cba9a8cc0db4141d1ef2717d7b0e", default-features = false, features = ["mimalloc"] }
@@ -24,7 +24,7 @@ winit = "0.30"
 arboard = { version = "3", features = ["wayland-data-control"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-accesskit_winit = { version = "0.29.2", features = ["accesskit_android"] }
+accesskit_winit = { version = "0.34.1", features = ["accesskit_android"] }
 android_clipboard = "0.1"
 android_logger = "0.15"
 jni = "0.21"

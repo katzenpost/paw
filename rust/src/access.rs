@@ -6,7 +6,7 @@
 
 use crate::events::AccessNode;
 use crate::render::UNITS;
-use accesskit::{Action, Node, NodeId, Rect, Role, Toggled, Tree, TreeUpdate};
+use accesskit::{Action, Node, NodeId, Rect, Role, Toggled, TreeId, TreeInfo, TreeUpdate};
 
 fn role(r: u64) -> Role {
     match r {
@@ -112,7 +112,8 @@ pub fn update(
     };
     TreeUpdate {
         nodes: built,
-        tree: Some(Tree::new(NodeId(root))),
+        tree: Some(TreeInfo::new(NodeId(root))),
+        tree_id: TreeId::ROOT,
         focus: NodeId(focus),
     }
 }

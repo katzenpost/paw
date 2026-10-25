@@ -81,6 +81,8 @@ struct App {
     #[cfg(target_os = "android")]
     typed: crate::textinput::TextInput,
     ime: bool,
+    /// Whether a wake came since the last poll.
+    woken: bool,
     /// The edges of the window that the system covers, in physical pixels: left, top, right and
     /// bottom. Paw draws and lays out inside them.
     inset: (u32, u32, u32, u32),
@@ -291,8 +293,9 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, _el: &ActiveEventLoop, event: UserEvent) {
         use accesskit_winit::WindowEvent as Ak;
-        // A wake has done its work by ending the wait.
+        // A wake ends the wait, or, if it came between polls, the next one.
         let UserEvent::Access(event) = event else {
+            self.woken = true;
             return;
         };
         match event.window_event {
@@ -313,7 +316,8 @@ impl ApplicationHandler<UserEvent> for App {
                     accesskit::Action::Decrement => 3,
                     _ => return,
                 };
-                self.events.push(WindowEvent::Access(req.target.0, action));
+                self.events
+                    .push(WindowEvent::Access(req.target_node.0, action));
             }
             Ak::AccessibilityDeactivated => {}
         }
@@ -404,6 +408,17 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 let pressed = event.state == ElementState::Pressed;
+                // winit reports no modifier changes on Android; they are read from the keys.
+                #[cfg(target_os = "android")]
+                if let WKey::Named(n) = &event.logical_key {
+                    match n {
+                        NamedKey::Shift => self.mods.shift = pressed,
+                        NamedKey::Control => self.mods.ctrl = pressed,
+                        NamedKey::Alt => self.mods.alt = pressed,
+                        NamedKey::Super | NamedKey::Meta => self.mods.sup = pressed,
+                        _ => {}
+                    }
+                }
                 let m = self.mods;
                 let Some(k) = key_of(&event.logical_key) else {
                     return;
@@ -478,6 +493,7 @@ fn open_here(title: &str, width: u32, height: u32) -> Result<(), String> {
             #[cfg(target_os = "android")]
             typed: Default::default(),
             ime: false,
+            woken: false,
             inset: (0, 0, 0, 0),
             proxy,
             adapter: None,
@@ -491,11 +507,20 @@ fn open_here(title: &str, width: u32, height: u32) -> Result<(), String> {
 /// there is one.
 pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
     on_loop(move || {
-        pump(timeout_ms);
+        // What came in since the last poll ends this one at once.
+        let pending = APP.with(|a| {
+            a.borrow()
+                .as_ref()
+                .is_some_and(|app| app.woken || !app.events.is_empty())
+        });
+        pump(if pending { 0 } else { timeout_ms });
         APP.with(|a| {
             a.borrow_mut()
                 .as_mut()
-                .map(|app| std::mem::take(&mut app.events))
+                .map(|app| {
+                    app.woken = false;
+                    std::mem::take(&mut app.events)
+                })
                 .unwrap_or_else(|| vec![WindowEvent::Close])
         })
     })
@@ -568,13 +593,17 @@ fn request_here(r: Request) {
                 app.surface = None;
             }
             Request::Ime(area) => {
+                // Only a change: on Android, allowing input shows the soft keyboard anew, which
+                // restarts its connection and loses what is being typed.
                 if area.is_some() != app.ime {
                     app.ime = area.is_some();
                     #[cfg(target_os = "android")]
                     app.start_typing();
+                    if let Some(w) = &app.window {
+                        w.set_ime_allowed(app.ime);
+                    }
                 }
                 if let Some(w) = &app.window {
-                    w.set_ime_allowed(area.is_some());
                     if let Some(r) = area {
                         let s = app.scale();
                         let p = |u: i64| u as f64 / crate::render::UNITS as f64 * s;

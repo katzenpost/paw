@@ -31,6 +31,12 @@ pub extern "C" fn paw_abi_version(_unit: *mut lean_object) -> u32 {
     ABI_VERSION
 }
 
+/// Whether this is Android.
+#[no_mangle]
+pub extern "C" fn paw_is_android(_unit: *mut lean_object) -> u8 {
+    cfg!(target_os = "android") as u8
+}
+
 /// The bytes of a borrowed Lean `ByteArray`.
 pub unsafe fn bytes_of<'a>(a: b_lean_obj_arg) -> &'a [u8] {
     std::slice::from_raw_parts(lean_sarray_cptr(a as *mut _), lean_sarray_size(a))

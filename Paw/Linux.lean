@@ -159,6 +159,9 @@ def requestEnc : Request → Option (List UInt8)
     | .default => 0 | .pointer => 1 | .text => 2 | .resizeH => 3 | .resizeV => 4))
   | .ime area => some (nat.enc 7 ++ (Codec.option Scene.rectCodec).enc area)
 
+/-- Whether the app runs on Android rather than Linux desktop. -/
+def onAndroid : Bool := Ffi.isAndroid ()
+
 /-- Text measured by the Rust layer, with the fonts it draws with. -/
 def measure (style : TextStyle) (t : SafeText) : Int × Int :=
   let bytes := int.enc style.size ++ bool.enc style.bold ++ string.enc t.text

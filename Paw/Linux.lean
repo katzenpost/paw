@@ -162,6 +162,11 @@ def requestEnc : Request → Option (List UInt8)
 /-- Whether the app runs on Android rather than Linux desktop. -/
 def onAndroid : Bool := Ffi.isAndroid ()
 
+/-- Whether the app holds an Android permission, such as `android.permission.RECORD_AUDIO`, which
+its build must declare (`PERMISSIONS` of `android/build.sh`). Without it, Android asks the user,
+and a later call has their answer. Off Android, always. -/
+def permission (name : String) : IO Bool := Ffi.permission name
+
 /-- Text measured by the Rust layer, with the fonts it draws with. -/
 def measure (style : TextStyle) (t : SafeText) : Int × Int :=
   let bytes := int.enc style.size ++ bool.enc style.bold ++ string.enc t.text

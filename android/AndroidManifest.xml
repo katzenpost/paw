@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-FileCopyrightText: Copyright (C) 2026 David Stainton -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- @NAME@ and @LABEL@ are filled in by build.sh. -->
+<!-- @NAME@, @LABEL@ and @PERMISSIONS@ are filled in by build.sh. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="@NAME@">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    @PERMISSIONS@
 
     <application
         android:label="@LABEL@"

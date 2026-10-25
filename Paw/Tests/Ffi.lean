@@ -86,6 +86,7 @@ def tests : TestM Unit := do
   check "a wake with no window open does nothing" true
   check "abiMatches" Ffi.abiMatches
   check "not on Android" !Ffi.isAndroid ()
+  check "off Android, a permission is held" (← Ffi.permission "android.permission.RECORD_AUDIO")
   check "an empty scene echoes" (echoes Scene.empty)
   checkEq "malformed bytes echo as nothing" 0 (Ffi.sceneEcho ⟨#[1, 0, 0, 0, 0, 9]⟩).size
   let mut g : Rng := ⟨99⟩

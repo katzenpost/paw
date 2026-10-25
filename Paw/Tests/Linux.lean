@@ -50,6 +50,7 @@ def tests : TestM Unit := do
   check "and they are the events meant"
     (decoded.any fun ds => (ds.zip sample).all fun (a, b) => eventEnc a == eventEnc b)
   check "Linux desktop is not Android" !onAndroid
+  check "off Android, a permission is held" (← permission "android.permission.RECORD_AUDIO")
   check "a set title request reaches Rust" (echoes (.setTitle (SafeName.filter "t")))
   check "a clipboard request" (echoes (.setClipboard (SafeText.filter "c")))
   check "a link" (echoes (.openUri "https://example.org"))

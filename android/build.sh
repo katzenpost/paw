@@ -1,0 +1,269 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: Copyright (C) 2026 David Stainton
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Builds a Paw app as an Android APK: Lean's runtime, the C Lean emits for the app and every module
+# it imports, and the Rust and C code of its packages, linked into one libmain.so that GameActivity
+# loads.
+#
+#   APP   the app's Lake package (default: this repository)
+#   EXE   its executable target (default: paw-gallery)
+#   ROOT  the executable's root module (default: GalleryMain)
+#   NAME  the app's Android package name (default: org.katzenpost.paw.gallery)
+#   LABEL the app's name on the launcher (default: Paw gallery)
+#   ANDROID_ABI    x86_64 or arm64-v8a (default: x86_64)
+#   ANDROID_HOME   the Android SDK (default: ~/Android/Sdk), with its newest NDK and build-tools
+#
+# Needs cargo-ndk (`cargo install cargo-ndk`) and the Rust targets of the ABI
+# (`rustup target add x86_64-linux-android aarch64-linux-android`).
+#
+# A package's native code is found by convention: a Rust crate in rust/, C files in c/.
+
+set -eu
+
+PAW=$(cd "$(dirname "$0")/.." && pwd)
+APP=$(cd "${APP:-$PAW}" && pwd)
+EXE=${EXE:-paw-gallery}
+ROOT=${ROOT:-GalleryMain}
+NAME=${NAME:-org.katzenpost.paw.gallery}
+LABEL=${LABEL:-Paw gallery}
+ABI=${ANDROID_ABI:-x86_64}
+API=28
+JOBS=${JOBS:-$(nproc)}
+
+case $ABI in
+  x86_64) TRIPLE=x86_64-linux-android ;;
+  arm64-v8a) TRIPLE=aarch64-linux-android ;;
+  *) echo "unknown ABI $ABI" >&2; exit 1 ;;
+esac
+
+SDK=${ANDROID_HOME:-$HOME/Android/Sdk}
+NDK=${ANDROID_NDK_HOME:-$(ls -d "$SDK"/ndk/* | sort -V | tail -1)}
+LLVM=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+CC="$LLVM/clang --target=$TRIPLE$API"
+CXX="$LLVM/clang++ --target=$TRIPLE$API"
+
+LEAN_PREFIX=$(cd "$APP" && lean --print-prefix)
+LEAN_VERSION=$(cd "$APP" && lean --version | sed 's/.*version \([^,]*\),.*/\1/')
+LEAN_INCLUDE=$LEAN_PREFIX/include
+
+WORK=$APP/.lake/android
+SRC=$WORK/src
+OUT=$WORK/$ABI
+mkdir -p "$SRC" "$OUT"
+
+say() { echo "== $*"; }
+
+command -v cargo-ndk >/dev/null || { echo "cargo-ndk is needed: cargo install cargo-ndk" >&2; exit 1; }
+
+# Downloads and unpacks a pinned source from deps.lock, checking its SHA-256.
+fetch() {
+  line=$(grep "^$1 " "$PAW/android/deps.lock") || { echo "$1 is not in deps.lock" >&2; exit 1; }
+  url=$(echo "$line" | cut -d' ' -f2)
+  sum=$(echo "$line" | cut -d' ' -f3)
+  file=$SRC/$1.${url##*.}
+  [ "${url%.tar.gz}" != "$url" ] && file=$SRC/$1.tar.gz
+  if [ ! -f "$file" ]; then
+    curl -fsSL -o "$file.part" "$url"
+    echo "$sum  $file.part" | sha256sum -c --quiet - || { rm -f "$file.part"; exit 1; }
+    mv "$file.part" "$file"
+  fi
+  case $file in
+    *.tar.gz)
+      if [ ! -d "$SRC/$1" ]; then
+        mkdir -p "$SRC/$1.tmp"
+        tar -xzf "$file" -C "$SRC/$1.tmp" --strip-components=1
+        mv "$SRC/$1.tmp" "$SRC/$1"
+      fi
+      echo "$SRC/$1" ;;
+    *) echo "$file" ;;
+  esac
+}
+
+lean_runtime() {
+  [ -f "$OUT/libleanrt.a" ] && [ -f "$OUT/libuv.a" ] && return
+  say "Lean $LEAN_VERSION runtime for $ABI"
+  lean=$(fetch "lean-$LEAN_VERSION")
+  mimalloc=$(fetch mimalloc-2.2.3)
+  uv=$(fetch libuv-1.48.0)
+  cmake -S "$uv" -B "$OUT/uv" -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+    -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" -DCMAKE_BUILD_TYPE=Release \
+    -DLIBUV_BUILD_TESTS=OFF -DLIBUV_BUILD_SHARED=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -Wno-dev >/dev/null
+  make -s -C "$OUT/uv" -j"$JOBS" uv_a >/dev/null
+  cp "$OUT/uv/libuv.a" "$OUT/libuv.a"
+  mkdir -p "$OUT/rt"
+  printf '#define LEAN_GITHASH "%s"\n' "$(cd "$APP" && lean --githash)" > "$OUT/rt/githash.h"
+  # The flags of Lean's src/runtime/CMakeLists.txt for a release build, without GMP or OpenSSL.
+  RT_FLAGS="-std=c++20 -O3 -DNDEBUG -fPIC -DLEAN_EXPORTING -DLEAN_BUILD_TYPE=\"Release\" -D__CLANG__ -DLEAN_MULTI_THREAD -DLEAN_MMAP -pthread"
+  RT_FLAGS="$RT_FLAGS -ffp-contract=off -I$lean/src -I$OUT/rt -I$LEAN_INCLUDE -I$uv/include -w"
+  export CXX RT_FLAGS OUT
+  for f in "$lean"/src/runtime/*.cpp "$lean"/src/runtime/uv/*.cpp "$PAW/android/openssl_stub.cpp"; do
+    case $f in */runtime/openssl.cpp) continue ;; esac
+    echo "$f"
+  done | xargs -P"$JOBS" -n1 sh -c 'o=$OUT/rt/$(echo "$0" | md5sum | cut -c1-12).o; $CXX $RT_FLAGS -c "$0" -o "$o"'
+  $CXX $RT_FLAGS -DMI_SHARED_LIB -DMI_SHARED_LIB_EXPORT -DMI_SECURE=0 -I"$mimalloc/include" \
+    -Wno-unused-function -x c++ -c "$mimalloc/src/static.c" -o "$OUT/rt/mimalloc.o"
+  rm -f "$OUT/libleanrt.a"
+  "$LLVM/llvm-ar" rcs "$OUT/libleanrt.a" "$OUT"/rt/*.o
+}
+
+# The C file Lake wrote for module $1, from the app or one of its packages.
+lake_c() {
+  rel=$(echo "$1" | tr . /).c
+  for d in "$APP" "$APP"/.lake/packages/*; do
+    [ -f "$d/.lake/build/ir/$rel" ] && { echo "$d/.lake/build/ir/$rel"; return; }
+  done
+  return 1
+}
+
+# Every module the executable's root imports, with the C file of each: Lake's for the app and its
+# packages, and C from `lean -c` for the toolchain's own modules, which ship only compiled.
+lean_c() {
+  say "Lean C of $ROOT and its imports"
+  (cd "$APP" && lake build "$EXE" >/dev/null)
+  stdc=$WORK/lean-$LEAN_VERSION/c
+  mkdir -p "$stdc"
+  : > "$OUT/modules"
+  todo=$ROOT
+  seen=" "
+  while [ -n "$todo" ]; do
+    next=""
+    for m in $todo; do
+      case $seen in *" $m "*) continue ;; esac
+      seen="$seen$m "
+      if c=$(lake_c "$m"); then
+        :
+      else
+        case $m in
+          Init|Init.*|Std|Std.*|Lean|Lean.*) ;;
+          *) echo "no C for module $m" >&2; exit 1 ;;
+        esac
+        c=$stdc/$m.c
+        if [ ! -f "$c" ]; then
+          (cd "$LEAN_PREFIX/src/lean" && lean --root=. -c "$c.tmp" "$(echo "$m" | tr . /).lean" >/dev/null)
+          mv "$c.tmp" "$c"
+        fi
+      fi
+      echo "$m $c" >> "$OUT/modules"
+      imports=$(sed -n '3s|^// Imports:||p' "$c" | tr ' ' '\n' | grep -v -x -e '' -e public -e meta -e import -e all -e private || true)
+      next="$next $imports"
+    done
+    todo=$next
+  done
+  echo "$(wc -l < "$OUT/modules") modules"
+}
+
+compile_lean_c() {
+  say "compiling Lean C for $ABI"
+  mkdir -p "$OUT/lean"
+  C_FLAGS="-O3 -fPIC -ffp-contract=off -fdata-sections -ffunction-sections -w -I$LEAN_INCLUDE"
+  export CC C_FLAGS OUT
+  xargs -P"$JOBS" -L1 sh -c 'o=$OUT/lean/$0.o; [ "$o" -nt "$1" ] || $CC $C_FLAGS -c "$1" -o "$o"' < "$OUT/modules"
+}
+
+# The packages' Rust crates and C files, for Android.
+native_code() {
+  say "Rust and C of the packages for $ABI"
+  mkdir -p "$OUT/c"
+  : > "$OUT/libs"
+  for d in "$APP" "$APP"/.lake/packages/*; do
+    if [ -f "$d/rust/Cargo.toml" ]; then
+      (cd "$d/rust" && ANDROID_NDK_HOME=$NDK cargo ndk -t "$ABI" --platform $API build --release --quiet)
+      for a in "$d/rust/target/$TRIPLE/release/"*.a; do
+        [ -f "$a" ] && echo "$(basename "$d") $a" >> "$OUT/libs"
+      done
+    fi
+    for f in "$d"/c/*.c; do
+      [ -f "$f" ] || continue
+      o=$OUT/c/$(basename "$d")-$(basename "$f" .c).o
+      $CC -O2 -fPIC -I"$LEAN_INCLUDE" -c "$f" -o "$o"
+    done
+  done
+}
+
+link() {
+  say "linking libmain.so for $ABI"
+  paw_lib=$(grep '/libpaw_ffi\.a$' "$OUT/libs" | head -1 | cut -d' ' -f2)
+  other_libs=$(grep -v '/libpaw_ffi\.a$' "$OUT/libs" | cut -d' ' -f2 | tr '\n' ' ')
+  mkdir -p "$OUT/apk/lib/$ABI"
+  # GameActivity's entry points, which Java looks up by name; they reach android_main.
+  entry=$("$LLVM/llvm-nm" -g --defined-only "$paw_lib" 2>/dev/null |
+    awk '$2 == "T" && ($3 ~ /^Java_/ || $3 ~ /^GameActivity_onCreate/) { printf "-Wl,-u,%s ", $3 }')
+  # Only the entry points are exported, so unused code can be dropped.
+  { echo "{ global: android_main; GameActivity_onCreate*; Java_*; local: *; };"; } > "$OUT/exports.map"
+  # shellcheck disable=SC2086
+  $CXX -shared -o "$OUT/libmain.so" -Wl,-soname,libmain.so $entry -Wl,--version-script,"$OUT/exports.map" \
+    "$OUT"/lean/*.o $(ls "$OUT"/c/*.o 2>/dev/null) \
+    -Wl,--start-group "$paw_lib" $other_libs "$OUT/libleanrt.a" "$OUT/libuv.a" -Wl,--end-group \
+    -static-libstdc++ -llog -landroid -lm -ldl \
+    -Wl,--gc-sections -Wl,--no-undefined -Wl,-z,max-page-size=16384
+  "$LLVM/llvm-strip" --strip-debug -o "$OUT/apk/lib/$ABI/libmain.so" "$OUT/libmain.so"
+  ls -la "$OUT/apk/lib/$ABI/libmain.so"
+}
+
+# The Java libraries of deps.lock, each checked against its SHA-256.
+java_libs() {
+  mkdir -p "$SRC/java"
+  sed -n '/^# Java libraries/,$p' "$PAW/android/deps.lock" | grep -v '^#' | while read -r name url sum; do
+    file=$SRC/java/$name
+    if [ ! -f "$file" ]; then
+      curl -fsSL -o "$file.part" "$url"
+      echo "$sum  $file.part" | sha256sum -c --quiet - || { rm -f "$file.part"; exit 1; }
+      mv "$file.part" "$file"
+    fi
+    echo "$file"
+  done
+}
+
+apk() {
+  say "packaging $NAME for $ABI"
+  BT=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
+  JAR=$(ls -d "$SDK"/platforms/android-* | sort -V | tail -1)/android.jar
+  A=$OUT/apk
+  rm -rf "$A/res" "$A/gen" "$A/classes" "$A/dex" "$A/jars"
+  mkdir -p "$A/res" "$A/gen" "$A/classes" "$A/dex" "$A/jars"
+  packages=""
+  for f in $(java_libs); do
+    base=$(basename "$f")
+    case $f in
+      *.aar)
+        d=$SRC/aar/${base%.aar}
+        if [ ! -d "$d" ]; then
+          mkdir -p "$d.tmp" && unzip -q -o "$f" -d "$d.tmp" && mv "$d.tmp" "$d"
+        fi
+        [ -f "$d/classes.jar" ] && cp "$d/classes.jar" "$A/jars/$base.jar"
+        for j in "$d"/libs/*.jar; do [ -f "$j" ] && cp "$j" "$A/jars/$base-$(basename "$j")"; done
+        if [ -d "$d/res" ] && [ -n "$(ls -A "$d/res")" ]; then
+          "$BT/aapt2" compile --dir "$d/res" -o "$A/res/$base.zip"
+        fi
+        pkg=$(sed -n 's/.*package="\([^"]*\)".*/\1/p' "$d/AndroidManifest.xml" | head -1)
+        packages="$packages${packages:+:}$pkg" ;;
+      *.jar) cp "$f" "$A/jars/$base" ;;
+    esac
+  done
+  sed -e "s|@NAME@|$NAME|" -e "s|@LABEL@|$LABEL|" "$PAW/android/AndroidManifest.xml" > "$A/AndroidManifest.xml"
+  # shellcheck disable=SC2046
+  "$BT/aapt2" link -I "$JAR" --manifest "$A/AndroidManifest.xml" -o "$A/base.apk" \
+    --min-sdk-version $API --target-sdk-version 34 --version-code 1 --version-name 0.1.0 \
+    --auto-add-overlay --extra-packages "$packages" --java "$A/gen" $(for r in "$A"/res/*.zip; do echo -R "$r"; done)
+  javac -nowarn --release 11 -cp "$JAR" -d "$A/classes" $(find "$A/gen" -name '*.java')
+  # shellcheck disable=SC2046
+  "$BT/d8" --release --min-api $API --lib "$JAR" --output "$A/dex" \
+    $(find "$A/classes" -name '*.class') "$A"/jars/*.jar
+  cp "$A/base.apk" "$A/unsigned.apk"
+  (cd "$A/dex" && zip -q "$A/unsigned.apk" classes*.dex)
+  # Stored, so the library is loaded straight from the APK.
+  (cd "$A" && zip -q -0 "$A/unsigned.apk" "lib/$ABI/libmain.so")
+  "$BT/zipalign" -f -P 16 4 "$A/unsigned.apk" "$A/aligned.apk"
+  "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
+    --ks-key-alias androiddebugkey --out "$WORK/$EXE-$ABI.apk" "$A/aligned.apk"
+  ls -la "$WORK/$EXE-$ABI.apk"
+}
+
+lean_runtime
+lean_c
+compile_lean_c
+native_code
+link
+apk

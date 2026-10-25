@@ -57,23 +57,28 @@ done
 ok "the gallery reported its layout"
 
 # Where the window's area starts on the screen, from the accessibility tree the gallery gives
-# Android, and how many pixels a logical pixel is.
-adb shell uiautomator dump /sdcard/paw-ui.xml >/dev/null 2>&1
-adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml"
-for name in "Paw gallery" "+" "Katzenpost on GitHub" "I agree"; do
-  if grep -q "content-desc=\"$name\"" "$WORK/ui.xml"; then ok "Android's accessibility tree has \"$name\""
-  else fail "Android's accessibility tree has \"$name\""; fi
-done
-# Reads where the window's area starts from the accessibility tree again, as turning the screen
-# moves it.
+# Android; turning the screen moves it. Android asks the app for its tree only once a client
+# connects, so the first dump may come before it.
 origin() {
-  adb shell uiautomator dump /sdcard/paw-ui.xml >/dev/null 2>&1
-  adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml"
+  n=0
+  while :; do
+    adb shell uiautomator dump /sdcard/paw-ui.xml >/dev/null 2>&1
+    adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml"
+    grep -q 'content-desc="Paw gallery"' "$WORK/ui.xml" && break
+    n=$((n + 1))
+    if [ $n -gt 10 ]; then fail "the window is in Android's accessibility tree"; exit 1; fi
+    sleep 1
+  done
   set -- $(sed -n 's/.*content-desc="Paw gallery"[^>]*bounds="\[\([0-9]*\),\([0-9]*\)\].*/\1 \2/p' "$WORK/ui.xml")
   OX=${1:-0}
   OY=${2:-0}
 }
 origin
+for name in "Paw gallery" "+" "Katzenpost on GitHub" "I agree"; do
+  if grep -q "content-desc=\"$name\"" "$WORK/ui.xml"; then ok "Android's accessibility tree has \"$name\""
+  else fail "Android's accessibility tree has \"$name\""; fi
+done
+# How many pixels a logical pixel is.
 SCALE=$(adb shell wm density | awk '{ d = $NF } END { print d / 160 }')
 
 # Taps the middle of the widget with a key.

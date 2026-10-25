@@ -80,29 +80,43 @@ fetch() {
   esac
 }
 
-lean_runtime() {
-  [ -f "$OUT/libleanrt.a" ] && [ -f "$OUT/libuv.a" ] && return
-  say "Lean $LEAN_VERSION runtime for $ABI"
+# Lean's sources, and the flags of its src/CMakeLists.txt for a release build of its C++, without
+# GMP or OpenSSL.
+lean_sources() {
   lean=$(fetch "lean-$LEAN_VERSION")
   mimalloc=$(fetch mimalloc-2.2.3)
   uv=$(fetch libuv-1.48.0)
+  mkdir -p "$OUT/rt"
+  printf '#define LEAN_GITHASH "%s"\n' "$(cd "$APP" && lean --githash)" > "$OUT/rt/githash.h"
+  CXX_FLAGS="-std=c++20 -O3 -DNDEBUG -fPIC -DLEAN_EXPORTING -DLEAN_BUILD_TYPE=\"Release\" -D__CLANG__"
+  CXX_FLAGS="$CXX_FLAGS -DLEAN_MULTI_THREAD -DLEAN_MMAP -pthread -ffp-contract=off"
+  CXX_FLAGS="$CXX_FLAGS -I$lean/src -I$OUT/rt -I$LEAN_INCLUDE -I$uv/include -w"
+  # Lean defines free_sized itself, which Android's headers declare only from API 37.
+  CXX_FLAGS="$CXX_FLAGS -D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__"
+  export CXX CXX_FLAGS
+}
+
+# Compiles C++ files, one a line on stdin, into objects in directory $1.
+compile_cpp() {
+  mkdir -p "$1"
+  O=$1 xargs -P"$JOBS" -n1 sh -c 'o=$O/$(echo "$0" | md5sum | cut -c1-12).o; $CXX $CXX_FLAGS -c "$0" -o "$o"'
+}
+
+lean_runtime() {
+  [ -f "$OUT/libleanrt.a" ] && [ -f "$OUT/libuv.a" ] && return
+  say "Lean $LEAN_VERSION runtime for $ABI"
+  lean_sources
   cmake -S "$uv" -B "$OUT/uv" -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" -DCMAKE_BUILD_TYPE=Release \
     -DLIBUV_BUILD_TESTS=OFF -DLIBUV_BUILD_SHARED=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -Wno-dev >/dev/null
   make -s -C "$OUT/uv" -j"$JOBS" uv_a >/dev/null
   cp "$OUT/uv/libuv.a" "$OUT/libuv.a"
-  mkdir -p "$OUT/rt"
-  printf '#define LEAN_GITHASH "%s"\n' "$(cd "$APP" && lean --githash)" > "$OUT/rt/githash.h"
-  # The flags of Lean's src/runtime/CMakeLists.txt for a release build, without GMP or OpenSSL.
-  RT_FLAGS="-std=c++20 -O3 -DNDEBUG -fPIC -DLEAN_EXPORTING -DLEAN_BUILD_TYPE=\"Release\" -D__CLANG__ -DLEAN_MULTI_THREAD -DLEAN_MMAP -pthread"
-  RT_FLAGS="$RT_FLAGS -ffp-contract=off -I$lean/src -I$OUT/rt -I$LEAN_INCLUDE -I$uv/include -w"
-  export CXX RT_FLAGS OUT
   for f in "$lean"/src/runtime/*.cpp "$lean"/src/runtime/uv/*.cpp "$PAW/android/openssl_stub.cpp"; do
     case $f in */runtime/openssl.cpp) continue ;; esac
     echo "$f"
-  done | xargs -P"$JOBS" -n1 sh -c 'o=$OUT/rt/$(echo "$0" | md5sum | cut -c1-12).o; $CXX $RT_FLAGS -c "$0" -o "$o"'
-  $CXX $RT_FLAGS -DMI_SHARED_LIB -DMI_SHARED_LIB_EXPORT -DMI_SECURE=0 -I"$mimalloc/include" \
+  done | compile_cpp "$OUT/rt"
+  $CXX $CXX_FLAGS -DMI_SHARED_LIB -DMI_SHARED_LIB_EXPORT -DMI_SECURE=0 -I"$mimalloc/include" \
     -Wno-unused-function -x c++ -c "$mimalloc/src/static.c" -o "$OUT/rt/mimalloc.o"
   rm -f "$OUT/libleanrt.a"
   "$LLVM/llvm-ar" rcs "$OUT/libleanrt.a" "$OUT"/rt/*.o
@@ -119,14 +133,8 @@ lake_c() {
 
 # Every module the executable's root imports, with the C file of each: Lake's for the app and its
 # packages, and C from `lean -c` for the toolchain's own modules, which ship only compiled.
-lean_c() {
-  say "Lean C of $ROOT and its imports"
-  (cd "$APP" && lake build "$EXE" >/dev/null)
-  stdc=$WORK/lean-$LEAN_VERSION/c
-  mkdir -p "$stdc"
-  : > "$OUT/modules"
-  todo=$ROOT
-  seen=" "
+# Adds the modules $todo names, and all they import, to $OUT/modules.
+add_modules() {
   while [ -n "$todo" ]; do
     next=""
     for m in $todo; do
@@ -151,7 +159,43 @@ lean_c() {
     done
     todo=$next
   done
+}
+
+lean_c() {
+  say "Lean C of $ROOT and its imports"
+  (cd "$APP" && lake build "$EXE" >/dev/null)
+  stdc=$WORK/lean-$LEAN_VERSION/c
+  mkdir -p "$stdc"
+  : > "$OUT/modules"
+  seen=" "
+  todo=$ROOT
+  add_modules
+  # Lean's C++ calls into the whole of the Lean and Std libraries, as they are built into Lean.
+  if grep -q '^Lean[ .]' "$OUT/modules"; then
+    todo="Lean Std"
+    add_modules
+  fi
   echo "$(wc -l < "$OUT/modules") modules"
+}
+
+# Lean's kernel and the rest of its C++, which the `Lean` package calls, for apps that import it:
+# the sources of Lean's src/CMakeLists.txt's leancpp.
+lean_cpp() {
+  grep -q '^Lean[ .]' "$OUT/modules" || return 0
+  [ -f "$OUT/libleancpp.a" ] && return
+  say "Lean's C++ for $ABI"
+  lean_sources
+  mkdir -p "$OUT/cpp"
+  # Its flags for compiling C, which mean nothing on Android.
+  sed 's/@[A-Z_]*@//g' "$lean/src/util/ffi.cpp" > "$OUT/cpp/ffi.cpp"
+  for d in util kernel library library/constructions initialize; do
+    sed -n '/add_library/,/)/p' "$lean/src/$d/CMakeLists.txt" | grep -o '[A-Za-z_]*\.cpp' |
+      while read -r f; do
+        if [ "$d/$f" = util/ffi.cpp ]; then echo "$OUT/cpp/ffi.cpp"; else echo "$lean/src/$d/$f"; fi
+      done
+  done | compile_cpp "$OUT/cpp"
+  rm -f "$OUT/libleancpp.a"
+  "$LLVM/llvm-ar" rcs "$OUT/libleancpp.a" "$OUT"/cpp/*.o
 }
 
 compile_lean_c() {
@@ -167,6 +211,10 @@ native_code() {
   say "Rust and C of the packages for $ABI"
   mkdir -p "$OUT/c"
   : > "$OUT/libs"
+  # Each crate's static library carries Rust's std, so all are built by the rustc Paw's crate
+  # pins, or the link finds std twice.
+  RUSTUP_TOOLCHAIN=$(sed -n 's/^channel = "\(.*\)"/\1/p' "$PAW/rust/rust-toolchain.toml")
+  export RUSTUP_TOOLCHAIN
   for d in "$APP" "$APP"/.lake/packages/*; do
     if [ -f "$d/rust/Cargo.toml" ]; then
       (cd "$d/rust" && ANDROID_NDK_HOME=$NDK cargo ndk -t "$ABI" --platform $API build --release --quiet)
@@ -190,13 +238,15 @@ link() {
   # GameActivity's entry points, which Java looks up by name; they reach android_main.
   entry=$("$LLVM/llvm-nm" -g --defined-only "$paw_lib" 2>/dev/null |
     awk '$2 == "T" && ($3 ~ /^Java_/ || $3 ~ /^GameActivity_onCreate/) { printf "-Wl,-u,%s ", $3 }')
+  # Android's system libraries; AAudio for crates that play or record sound, needed only by them.
   # Only the entry points are exported, so unused code can be dropped.
   { echo "{ global: android_main; GameActivity_onCreate*; Java_*; local: *; };"; } > "$OUT/exports.map"
   # shellcheck disable=SC2086
   $CXX -shared -o "$OUT/libmain.so" -Wl,-soname,libmain.so $entry -Wl,--version-script,"$OUT/exports.map" \
     "$OUT"/lean/*.o $(ls "$OUT"/c/*.o 2>/dev/null) \
-    -Wl,--start-group "$paw_lib" $other_libs "$OUT/libleanrt.a" "$OUT/libuv.a" -Wl,--end-group \
-    -static-libstdc++ -llog -landroid -lm -ldl \
+    -Wl,--start-group "$paw_lib" $other_libs $(ls "$OUT/libleancpp.a" 2>/dev/null) "$OUT/libleanrt.a" \
+    "$OUT/libuv.a" -Wl,--end-group \
+    -static-libstdc++ -llog -landroid -lm -ldl -Wl,--as-needed -laaudio -Wl,--no-as-needed \
     -Wl,--gc-sections -Wl,--no-undefined -Wl,-z,max-page-size=16384
   "$LLVM/llvm-strip" --strip-debug -o "$OUT/apk/lib/$ABI/libmain.so" "$OUT/libmain.so"
   ls -la "$OUT/apk/lib/$ABI/libmain.so"
@@ -263,6 +313,7 @@ apk() {
 
 lean_runtime
 lean_c
+lean_cpp
 compile_lean_c
 native_code
 link

@@ -7,7 +7,7 @@
 //! The test hooks of `Paw/Linux.lean` are read from system properties, which `adb shell setprop`
 //! sets: `debug.paw.test_log` and `debug.paw.test_layout` name files in the app's files directory,
 //! and `debug.paw.theme` and `debug.paw.reduce_motion` stand for `PAW_THEME` and
-//! `PAW_REDUCE_MOTION`.
+//! `PAW_REDUCE_MOTION`. `debug.paw.args`, words split at spaces, are the program's arguments.
 
 use jni::objects::{JObject, JValue};
 use jni::{JNIEnv, JavaVM};
@@ -129,10 +129,19 @@ fn android_main(app: AndroidApp) {
     keys_to_native();
     let (tx, rx) = mpsc::channel::<Job>();
     let _ = JOBS.set(Mutex::new(tx));
-    std::thread::spawn(|| {
-        let name = c"paw".as_ptr() as *mut c_char;
-        let mut argv = [name, std::ptr::null_mut()];
-        let code = unsafe { lean_main(1, argv.as_mut_ptr()) };
+    let args: Vec<CString> = std::iter::once("paw".to_string())
+        .chain(property("debug.paw.args").into_iter().flat_map(|a| {
+            a.split(' ')
+                .filter(|w| !w.is_empty())
+                .map(String::from)
+                .collect::<Vec<_>>()
+        }))
+        .filter_map(|a| CString::new(a).ok())
+        .collect();
+    std::thread::spawn(move || {
+        let mut argv: Vec<*mut c_char> = args.iter().map(|a| a.as_ptr() as *mut c_char).collect();
+        argv.push(std::ptr::null_mut());
+        let code = unsafe { lean_main(args.len() as c_int, argv.as_mut_ptr()) };
         std::process::exit(code);
     });
     loop {

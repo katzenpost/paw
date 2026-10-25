@@ -596,6 +596,9 @@ fn request_here(r: Request) {
                 // Only a change: on Android, allowing input shows the soft keyboard anew, which
                 // restarts its connection and loses what is being typed.
                 if area.is_some() != app.ime {
+                    // What was typed before focus left goes to the field it was typed in.
+                    #[cfg(target_os = "android")]
+                    app.read_typed();
                     app.ime = area.is_some();
                     #[cfg(target_os = "android")]
                     app.start_typing();

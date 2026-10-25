@@ -83,10 +83,17 @@ SCALE=$(adb shell wm density | awk '{ d = $NF } END { print d / 160 }')
 
 # Taps the middle of the widget with a key.
 tap() {
-  adb exec-out cat $FILES/layout.txt > "$WORK/layout.txt"
-  set -- $(awk -v k="$1" -v s="$SCALE" -v ox="$OX" -v oy="$OY" \
-    '$1 == k { printf "%d %d\n", ox + ($2 + $4) / 2 * s, oy + ($3 + $5) / 2 * s }' "$WORK/layout.txt")
-  adb shell input tap "$1" "$2"
+  n=0
+  while :; do
+    adb exec-out cat $FILES/layout.txt > "$WORK/layout.txt"
+    xy=$(awk -v k="$1" -v s="$SCALE" -v ox="$OX" -v oy="$OY" \
+      '$1 == k { printf "%d %d\n", ox + ($2 + $4) / 2 * s, oy + ($3 + $5) / 2 * s }' "$WORK/layout.txt")
+    [ -n "$xy" ] && break
+    n=$((n + 1))
+    if [ $n -gt 20 ]; then fail "$1 is in the layout"; return; fi
+    sleep 0.1
+  done
+  adb shell input tap $xy
   sleep 0.3
 }
 

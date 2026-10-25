@@ -187,6 +187,8 @@ d=open(sys.argv[1],"rb").read(); print(len(set(d[i] for i in range(len(d)//2, le
 if [ "$colours" -gt 4 ]; then ok "it draws again when it comes back"; else fail "it draws again when it comes back"; fi
 expect "count=2 .*plums" "with its model kept"
 
+# Coming back lays the window out again.
+settle load
 tap load
 expect "picture=true" "a task's picture is shown"
 # The Lists tab is wider than a phone held upright; turning it lays the gallery out again.

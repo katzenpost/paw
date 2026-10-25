@@ -97,6 +97,21 @@ tap() {
   sleep 0.3
 }
 
+# Waits until the widget with a key has kept its box in the layout for a second, longer than the
+# router's 500 ms.
+settle() {
+  prev=
+  n=0
+  while :; do
+    cur=$(adb exec-out cat $FILES/layout.txt 2>/dev/null | awk -v k="$1" '$1 == k')
+    [ -n "$cur" ] && [ "$cur" = "$prev" ] && return
+    prev=$cur
+    n=$((n + 1))
+    if [ $n -gt 20 ]; then fail "$1 comes to rest"; return; fi
+    sleep 1
+  done
+}
+
 # Widgets must have been still for the router's 500 ms before a tap designates them.
 sleep 1
 tap inc
@@ -114,8 +129,8 @@ adb shell input text plums
 tap add
 expect "plums" "an item is added"
 # Over adb a tap takes longer than the router's 500 ms, so that a tap on a widget that just moved
-# designates nothing is tested in process and on X11 instead.
-sleep 0.6
+# designates nothing is tested in process and on X11 instead. Adding the item moved the link.
+settle link
 tap link
 expect "opened=1" "a real tap opens the link"
 if adb logcat -d | grep -q "act=android.intent.action.VIEW dat=https://github.com/"; then

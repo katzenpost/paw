@@ -2,18 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Android: the entry point, which runs the Lean program in the app's files directory with its
-//! output in logcat, and the clipboard, links and notifications through Java.
+//! output in logcat, and what no crate offers: notifications and the window's insets, through Java.
 //!
 //! The test hooks of `Paw/Linux.lean` are read from system properties, which `adb shell setprop`
 //! sets: `debug.paw.test_log` and `debug.paw.test_layout` name files in the app's files directory,
 //! and `debug.paw.theme` and `debug.paw.reduce_motion` stand for `PAW_THEME` and
 //! `PAW_REDUCE_MOTION`.
 
-use jni::objects::{JObject, JString, JValue};
+use jni::objects::{JObject, JValue};
 use jni::{JNIEnv, JavaVM};
 use std::ffi::{c_char, c_int, CString};
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::OnceLock;
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::time::Duration;
 use winit::platform::android::activity::AndroidApp;
 
 static APP: OnceLock<AndroidApp> = OnceLock::new();
@@ -23,21 +24,11 @@ pub fn app() -> Option<AndroidApp> {
     APP.get().cloned()
 }
 
-#[link(name = "log")]
-extern "C" {
-    fn __android_log_write(prio: c_int, tag: *const c_char, text: *const c_char) -> c_int;
-}
-
 extern "C" {
     /// The Lean program's `main`, which Lean emits in C.
     #[link_name = "main"]
     fn lean_main(argc: c_int, argv: *mut *mut c_char) -> c_int;
     fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
-}
-
-fn log(s: &str) {
-    let text = CString::new(s.replace('\0', "")).unwrap_or_default();
-    unsafe { __android_log_write(4, c"paw".as_ptr(), text.as_ptr()) };
 }
 
 /// Sends what the program writes to stdout and stderr to logcat, a line at a time.
@@ -56,7 +47,7 @@ fn log_stdio() {
     let read = unsafe { std::fs::File::from_raw_fd(fds[0]) };
     std::thread::spawn(move || {
         for line in std::io::BufReader::new(read).lines().map_while(Result::ok) {
-            log(&line);
+            log::info!("{line}");
         }
     });
 }
@@ -97,12 +88,37 @@ fn test_hooks(files: Option<&std::path::Path>) {
     }
 }
 
-/// Runs the Lean program, once per process: its runtime cannot be started twice.
+type Job = Box<dyn FnOnce() + Send>;
+
+static JOBS: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
+
+/// Runs `f` on `android_main`'s thread, which owns the window, and returns what it returns.
+pub fn on_main<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let job: Job = Box::new(move || {
+        let _ = tx.send(f());
+    });
+    let sent = JOBS
+        .get()
+        .and_then(|j| j.lock().ok())
+        .is_some_and(|j| j.send(job).is_ok());
+    assert!(sent, "paw: no android_main to run on");
+    rx.recv().expect("android_main ran the job")
+}
+
+/// Runs the Lean program, once per process, as its runtime cannot be started twice. Lean runs on a
+/// thread of its own, with the stack it asks for; this thread runs what Lean asks of the window and
+/// otherwise keeps taking in the system's events.
 #[no_mangle]
 fn android_main(app: AndroidApp) {
     if APP.set(app.clone()).is_err() {
         return;
     }
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_tag("paw")
+            .with_max_level(log::LevelFilter::Info),
+    );
     log_stdio();
     let files = app.internal_data_path();
     if let Some(dir) = &files {
@@ -110,18 +126,29 @@ fn android_main(app: AndroidApp) {
         std::env::set_var("HOME", dir);
     }
     test_hooks(files.as_deref());
-    let name = c"paw".as_ptr() as *mut c_char;
-    let mut argv = [name, std::ptr::null_mut()];
-    let code = unsafe { lean_main(1, argv.as_mut_ptr()) };
-    std::process::exit(code);
+    let (tx, rx) = mpsc::channel::<Job>();
+    let _ = JOBS.set(Mutex::new(tx));
+    std::thread::spawn(|| {
+        let name = c"paw".as_ptr() as *mut c_char;
+        let mut argv = [name, std::ptr::null_mut()];
+        let code = unsafe { lean_main(1, argv.as_mut_ptr()) };
+        std::process::exit(code);
+    });
+    loop {
+        match rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(job) => job(),
+            Err(mpsc::RecvTimeoutError::Timeout) => crate::window::idle(),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
 }
 
 /// Runs `f` with the JVM attached to this thread and the activity; `None` if Java threw.
 fn with_activity<R>(f: impl FnOnce(&mut JNIEnv, &JObject) -> jni::errors::Result<R>) -> Option<R> {
     let app = APP.get()?;
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as *mut _) }.ok()?;
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }.ok()?;
     let mut env = vm.attach_current_thread().ok()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
     let r = f(&mut env, &activity);
     if env.exception_check().unwrap_or(false) {
         let _ = env.exception_describe();
@@ -130,113 +157,41 @@ fn with_activity<R>(f: impl FnOnce(&mut JNIEnv, &JObject) -> jni::errors::Result
     r.ok()
 }
 
-fn service<'a>(
-    env: &mut JNIEnv<'a>,
-    activity: &JObject,
-    name: &str,
-) -> jni::errors::Result<JObject<'a>> {
-    let name = env.new_string(name)?;
-    env.call_method(
-        activity,
-        "getSystemService",
-        "(Ljava/lang/String;)Ljava/lang/Object;",
-        &[JValue::Object(&name)],
-    )?
-    .l()
-}
-
-pub fn set_clipboard(text: &str) {
+/// The edges of the window that the system's bars, the display's cutout and the soft keyboard
+/// cover, in physical pixels: left, top, right and bottom. GameActivity draws edge to edge.
+pub fn insets() -> Option<(u32, u32, u32, u32)> {
+    // androidx's WindowInsetsCompat.Type: system bars, the soft keyboard and display cutouts.
+    const TYPES: i32 = 0x7 | 0x8 | 0x80;
     with_activity(|env, activity| {
-        let cm = service(env, activity, "clipboard")?;
-        let label = env.new_string("")?;
-        let text = env.new_string(text)?;
-        let clip = env
-            .call_static_method(
-                "android/content/ClipData",
-                "newPlainText",
-                "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
-                &[JValue::Object(&label), JValue::Object(&text)],
+        let insets = env
+            .call_method(
+                activity,
+                "getWindowInsets",
+                "(I)Landroidx/core/graphics/Insets;",
+                &[JValue::Int(TYPES)],
             )?
             .l()?;
-        env.call_method(
-            &cm,
-            "setPrimaryClip",
-            "(Landroid/content/ClipData;)V",
-            &[JValue::Object(&clip)],
-        )?;
-        Ok(())
-    });
-}
-
-pub fn clipboard() -> Option<String> {
-    with_activity(|env, activity| {
-        let cm = service(env, activity, "clipboard")?;
-        let clip = env
-            .call_method(&cm, "getPrimaryClip", "()Landroid/content/ClipData;", &[])?
-            .l()?;
-        if clip.is_null() {
+        if insets.is_null() {
             return Ok(None);
         }
-        let item = env
-            .call_method(
-                &clip,
-                "getItemAt",
-                "(I)Landroid/content/ClipData$Item;",
-                &[JValue::Int(0)],
-            )?
-            .l()?;
-        let text = env
-            .call_method(
-                &item,
-                "coerceToText",
-                "(Landroid/content/Context;)Ljava/lang/CharSequence;",
-                &[JValue::Object(activity)],
-            )?
-            .l()?;
-        let s = env
-            .call_method(&text, "toString", "()Ljava/lang/String;", &[])?
-            .l()?;
-        Ok(Some(env.get_string(&JString::from(s))?.into()))
+        let mut side = |name| -> jni::errors::Result<u32> {
+            Ok(env.get_field(&insets, name, "I")?.i()?.max(0) as u32)
+        };
+        Ok(Some((
+            side("left")?,
+            side("top")?,
+            side("right")?,
+            side("bottom")?,
+        )))
     })
     .flatten()
 }
-
-/// Opens a link Lean checked, in the app the system picks for it.
-pub fn open_uri(uri: &str) {
-    with_activity(|env, activity| {
-        let s = env.new_string(uri)?;
-        let uri = env
-            .call_static_method(
-                "android/net/Uri",
-                "parse",
-                "(Ljava/lang/String;)Landroid/net/Uri;",
-                &[JValue::Object(&s)],
-            )?
-            .l()?;
-        let action = env.new_string("android.intent.action.VIEW")?;
-        let intent = env.new_object(
-            "android/content/Intent",
-            "(Ljava/lang/String;Landroid/net/Uri;)V",
-            &[JValue::Object(&action), JValue::Object(&uri)],
-        )?;
-        env.call_method(
-            activity,
-            "startActivity",
-            "(Landroid/content/Intent;)V",
-            &[JValue::Object(&intent)],
-        )?;
-        Ok(())
-    });
-}
-
-const CHANNEL: &str = "paw";
-const NOTIFY_PERMISSION: &str = "android.permission.POST_NOTIFICATIONS";
 
 /// Shows a notification. Without permission to, asks for it, and this one is not shown.
 pub fn notify(title: &str, body: &str) {
     static NEXT: AtomicI32 = AtomicI32::new(1);
     with_activity(|env, activity| {
-        let perm = env.new_string(NOTIFY_PERMISSION)?;
+        let perm = env.new_string("android.permission.POST_NOTIFICATIONS")?;
         let granted = env
             .call_method(
                 activity,
@@ -256,8 +211,16 @@ pub fn notify(title: &str, body: &str) {
             )?;
             return Ok(());
         }
-        let nm = service(env, activity, "notification")?;
-        let id = env.new_string(CHANNEL)?;
+        let service = env.new_string("notification")?;
+        let nm = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service)],
+            )?
+            .l()?;
+        let id = env.new_string("paw")?;
         let name = env.new_string("Notifications")?;
         let channel = env.new_object(
             "android/app/NotificationChannel",
@@ -280,22 +243,23 @@ pub fn notify(title: &str, body: &str) {
             .i()?;
         let title = env.new_string(title)?;
         let body = env.new_string(body)?;
+        let set = "Landroid/app/Notification$Builder;";
         env.call_method(
             &builder,
             "setSmallIcon",
-            "(I)Landroid/app/Notification$Builder;",
+            format!("(I){set}"),
             &[JValue::Int(icon)],
         )?;
         env.call_method(
             &builder,
             "setContentTitle",
-            "(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;",
+            format!("(Ljava/lang/CharSequence;){set}"),
             &[JValue::Object(&title)],
         )?;
         env.call_method(
             &builder,
             "setContentText",
-            "(Ljava/lang/CharSequence;)Landroid/app/Notification$Builder;",
+            format!("(Ljava/lang/CharSequence;){set}"),
             &[JValue::Object(&body)],
         )?;
         let n = env

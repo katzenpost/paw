@@ -26,8 +26,20 @@ use winit::window::{Window, WindowId};
 
 /// Milliseconds since the platform layer started.
 pub fn now() -> u64 {
-    thread_local!(static START: Instant = Instant::now());
-    START.with(|s| s.elapsed().as_millis() as u64)
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// Runs `f` on the thread that owns the window. On Android that is `android_main`'s, where the
+/// system delivers the app's events; Lean runs on a thread of its own.
+#[cfg(not(target_os = "android"))]
+fn on_loop<R>(f: impl FnOnce() -> R) -> R {
+    f()
+}
+
+#[cfg(target_os = "android")]
+fn on_loop<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+    crate::android::on_main(f)
 }
 
 /// What other threads send the loop: AccessKit's requests, and a nudge to stop waiting.
@@ -69,6 +81,9 @@ struct App {
     #[cfg(target_os = "android")]
     typed: crate::textinput::TextInput,
     ime: bool,
+    /// The edges of the window that the system covers, in physical pixels: left, top, right and
+    /// bottom. Paw draws and lays out inside them.
+    inset: (u32, u32, u32, u32),
     proxy: EventLoopProxy<UserEvent>,
     adapter: Option<accesskit_winit::Adapter>,
     /// The last accessibility tree from Lean, for a screen reader that asks for it.
@@ -108,10 +123,10 @@ impl Clipboard {
         Clipboard
     }
     fn get(&mut self) -> Option<String> {
-        crate::android::clipboard()
+        android_clipboard::get_text().ok()
     }
     fn set(&mut self, t: String) {
-        crate::android::set_clipboard(&t)
+        let _ = android_clipboard::set_text(t);
     }
 }
 
@@ -163,6 +178,35 @@ impl App {
             .unwrap_or(1.0)
     }
 
+    /// The part of the window Paw draws in, in physical pixels.
+    fn area(&self) -> Option<(u32, u32)> {
+        let s = self.window.as_ref()?.inner_size();
+        let (l, t, r, b) = self.inset;
+        Some((
+            s.width.saturating_sub(l + r).max(1),
+            s.height.saturating_sub(t + b).max(1),
+        ))
+    }
+
+    fn resize_event(&mut self) {
+        if let Some((w, h)) = self.area() {
+            let scale = self.scale();
+            self.events.push(WindowEvent::Resize(
+                units(w as f64, scale),
+                units(h as f64, scale),
+            ));
+        }
+    }
+
+    /// A point of the window in physical pixels, in units from the corner of the area.
+    fn point(&self, x: f64, y: f64) -> (i64, i64) {
+        let scale = self.scale();
+        (
+            units(x - self.inset.0 as f64, scale),
+            units(y - self.inset.1 as f64, scale),
+        )
+    }
+
     fn input(&mut self, kind: InputKind) {
         self.events.push(WindowEvent::Input(Input {
             kind,
@@ -173,6 +217,7 @@ impl App {
     }
 
     fn present(&mut self) {
+        let Some((aw, ah)) = self.area() else { return };
         let (Some(window), Some(surface)) = (self.window.as_ref(), self.surface.as_mut()) else {
             return;
         };
@@ -180,16 +225,30 @@ impl App {
         let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else {
             return;
         };
+        let (l, t, _, _) = self.inset;
         let scale = window.scale_factor() as f32;
-        let pm = with_text(|t| render(&self.scene, w.get(), h.get(), scale, t));
+        let pm = with_text(|tx| render(&self.scene, aw, ah, scale, tx));
         if surface.resize(w, h).is_err() {
             return;
         }
         let Ok(mut buf) = surface.buffer_mut() else {
             return;
         };
-        for (dst, p) in buf.iter_mut().zip(pm.pixels()) {
-            *dst = ((p.red() as u32) << 16) | ((p.green() as u32) << 8) | p.blue() as u32;
+        let rgb = |p: &tiny_skia::PremultipliedColorU8| {
+            ((p.red() as u32) << 16) | ((p.green() as u32) << 8) | p.blue() as u32
+        };
+        let px = pm.pixels();
+        // What the system covers takes the colour of the area's corner.
+        let edge = px.first().map(rgb).unwrap_or(0);
+        for (y, row) in buf.chunks_mut(w.get() as usize).enumerate() {
+            for (x, dst) in row.iter_mut().enumerate() {
+                let (x, y) = (x as u32, y as u32);
+                *dst = if x >= l && y >= t && x - l < aw && y - t < ah {
+                    rgb(&px[((y - t) * aw + (x - l)) as usize])
+                } else {
+                    edge
+                };
+            }
         }
         let _ = buf.present();
     }
@@ -201,12 +260,7 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(window) = self.window.clone() {
             if self.surface.is_none() {
                 self.surface = surface(&window);
-                let s = window.inner_size();
-                let scale = window.scale_factor();
-                self.events.push(WindowEvent::Resize(
-                    units(s.width as f64, scale),
-                    units(s.height as f64, scale),
-                ));
+                self.resize_event();
                 window.request_redraw();
             }
             return;
@@ -227,13 +281,8 @@ impl ApplicationHandler<UserEvent> for App {
         window.set_visible(true);
         let window = Rc::new(window);
         self.surface = surface(&window);
-        let s = window.inner_size();
-        let scale = window.scale_factor();
-        self.events.push(WindowEvent::Resize(
-            units(s.width as f64, scale),
-            units(s.height as f64, scale),
-        ));
         self.window = Some(window);
+        self.resize_event();
     }
 
     fn suspended(&mut self, _el: &ActiveEventLoop) {
@@ -274,13 +323,9 @@ impl ApplicationHandler<UserEvent> for App {
         if let (Some(a), Some(w)) = (self.adapter.as_mut(), self.window.as_ref()) {
             a.process_event(w, &event);
         }
-        let scale = self.scale();
         match event {
             WE::CloseRequested => self.events.push(WindowEvent::Close),
-            WE::Resized(s) => self.events.push(WindowEvent::Resize(
-                units(s.width as f64, scale),
-                units(s.height as f64, scale),
-            )),
+            WE::Resized(_) => self.resize_event(),
             WE::RedrawRequested => self.present(),
             WE::Focused(f) => self.events.push(WindowEvent::Focus(f)),
             WE::Ime(ime) => match ime {
@@ -305,7 +350,7 @@ impl ApplicationHandler<UserEvent> for App {
                 };
             }
             WE::CursorMoved { position, .. } => {
-                self.cursor = (units(position.x, scale), units(position.y, scale));
+                self.cursor = self.point(position.x, position.y);
                 self.input(InputKind::Move(self.cursor.0, self.cursor.1));
             }
             WE::CursorLeft { .. } => self.input(InputKind::LeaveWindow),
@@ -316,7 +361,7 @@ impl ApplicationHandler<UserEvent> for App {
                     winit::event::TouchPhase::Ended => Phase::Ended,
                     winit::event::TouchPhase::Cancelled => Phase::Cancelled,
                 };
-                let (x, y) = (units(t.location.x, scale), units(t.location.y, scale));
+                let (x, y) = self.point(t.location.x, t.location.y);
                 for kind in self.touch.event(t.id, phase, x, y) {
                     if let InputKind::Move(x, y) = kind {
                         self.cursor = (x, y);
@@ -385,6 +430,11 @@ impl ApplicationHandler<UserEvent> for App {
 
 /// Opens the window. The first poll reports its size.
 pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
+    let title = title.to_string();
+    on_loop(move || open_here(&title, width, height))
+}
+
+fn open_here(title: &str, width: u32, height: u32) -> Result<(), String> {
     // Lean runs `main` on a thread of its own; every use of the loop stays on that thread.
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     #[cfg(not(target_os = "android"))]
@@ -428,6 +478,7 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
             #[cfg(target_os = "android")]
             typed: Default::default(),
             ime: false,
+            inset: (0, 0, 0, 0),
             proxy,
             adapter: None,
             access: None,
@@ -439,11 +490,30 @@ pub fn open(title: &str, width: u32, height: u32) -> Result<(), String> {
 /// Events since the last poll, waiting up to `timeout_ms` for the first, or with `u32::MAX`, until
 /// there is one.
 pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
+    on_loop(move || {
+        pump(timeout_ms);
+        APP.with(|a| {
+            a.borrow_mut()
+                .as_mut()
+                .map(|app| std::mem::take(&mut app.events))
+                .unwrap_or_else(|| vec![WindowEvent::Close])
+        })
+    })
+}
+
+/// Takes in what the system has delivered, without waiting, for the next poll; for while Lean is
+/// busy, as Android expects its events to be handled promptly.
+#[cfg(target_os = "android")]
+pub fn idle() {
+    pump(0);
+}
+
+fn pump(timeout_ms: u32) {
     LOOP.with(|l| {
         APP.with(|a| {
             let (mut l, mut a) = (l.borrow_mut(), a.borrow_mut());
             let (Some(el), Some(app)) = (l.as_mut(), a.as_mut()) else {
-                return vec![WindowEvent::Close];
+                return;
             };
             let timeout =
                 (timeout_ms != u32::MAX).then(|| Duration::from_millis(timeout_ms as u64));
@@ -453,14 +523,20 @@ pub fn poll(timeout_ms: u32) -> Vec<WindowEvent> {
                 app.events.push(WindowEvent::Close);
             }
             #[cfg(target_os = "android")]
-            app.read_typed();
-            std::mem::take(&mut app.events)
+            {
+                app.read_typed();
+                app.read_insets();
+            }
         })
     })
 }
 
 /// Shows `scene` from now on.
 pub fn present(scene: Scene) {
+    on_loop(move || present_here(scene))
+}
+
+fn present_here(scene: Scene) {
     APP.with(|a| {
         if let Some(app) = a.borrow_mut().as_mut() {
             app.scene = scene;
@@ -470,6 +546,10 @@ pub fn present(scene: Scene) {
 }
 
 pub fn request(r: Request) {
+    on_loop(move || request_here(r))
+}
+
+fn request_here(r: Request) {
     APP.with(|a| {
         let mut a = a.borrow_mut();
         let Some(app) = a.as_mut() else { return };
@@ -498,8 +578,9 @@ pub fn request(r: Request) {
                     if let Some(r) = area {
                         let s = app.scale();
                         let p = |u: i64| u as f64 / crate::render::UNITS as f64 * s;
+                        let (l, t) = (app.inset.0 as f64, app.inset.1 as f64);
                         w.set_ime_cursor_area(
-                            winit::dpi::PhysicalPosition::new(p(r.x0), p(r.y0)),
+                            winit::dpi::PhysicalPosition::new(p(r.x0) + l, p(r.y0) + t),
                             winit::dpi::PhysicalSize::new(
                                 p(r.x1 - r.x0).max(1.0),
                                 p(r.y1 - r.y0).max(1.0),
@@ -522,7 +603,8 @@ pub fn request(r: Request) {
                 }
             }
             Request::Access(focus, nodes) => {
-                let tree = crate::access::update(focus, &nodes, app.scale(), &app.title);
+                let origin = (app.inset.0 as f64, app.inset.1 as f64);
+                let tree = crate::access::update(focus, &nodes, app.scale(), origin, &app.title);
                 app.access = Some(tree.clone());
                 if let Some(a) = app.adapter.as_mut() {
                     a.update_if_active(|| tree);
@@ -534,14 +616,17 @@ pub fn request(r: Request) {
 
 /// The window's size in units, once it is open.
 pub fn size() -> (i64, i64) {
+    on_loop(size_here)
+}
+
+fn size_here() -> (i64, i64) {
     APP.with(|a| {
         let a = a.borrow();
         let Some(app) = a.as_ref() else { return (0, 0) };
-        match &app.window {
-            Some(w) => {
-                let s = w.inner_size();
-                let scale = w.scale_factor();
-                (units(s.width as f64, scale), units(s.height as f64, scale))
+        match app.area() {
+            Some((w, h)) => {
+                let scale = app.scale();
+                (units(w as f64, scale), units(h as f64, scale))
             }
             None => (
                 (app.size.0 as i64) * UNITS as i64,
@@ -553,12 +638,17 @@ pub fn size() -> (i64, i64) {
 
 /// The last frame shown, as PNG.
 pub fn screenshot() -> Vec<u8> {
+    on_loop(screenshot_here)
+}
+
+fn screenshot_here() -> Vec<u8> {
     APP.with(|a| {
         let a = a.borrow();
         let Some(app) = a.as_ref() else { return vec![] };
-        let Some(w) = &app.window else { return vec![] };
-        let s = w.inner_size();
-        let pm = with_text(|t| render(&app.scene, s.width, s.height, w.scale_factor() as f32, t));
+        let Some((w, h)) = app.area() else {
+            return vec![];
+        };
+        let pm = with_text(|t| render(&app.scene, w, h, app.scale() as f32, t));
         pm.encode_png().unwrap_or_default()
     })
 }
@@ -568,10 +658,9 @@ fn surface(window: &Rc<Window>) -> Option<softbuffer::Surface<Rc<Window>, Rc<Win
     softbuffer::Surface::new(&ctx, window.clone()).ok()
 }
 
-// Lean checked the link; it is passed as one argument, with no shell.
-#[cfg(not(target_os = "android"))]
+/// Opens a link Lean checked, in the system's browser or mail program.
 fn open_uri(u: &str) {
-    let _ = std::process::Command::new("xdg-open").arg(u).spawn();
+    let _ = webbrowser::open(u);
 }
 
 #[cfg(not(target_os = "android"))]
@@ -584,7 +673,7 @@ fn notify(title: &str, body: &str) {
 }
 
 #[cfg(target_os = "android")]
-use crate::android::{notify, open_uri};
+use crate::android::notify;
 
 #[cfg(target_os = "android")]
 impl App {
@@ -609,6 +698,19 @@ impl App {
                 TextInputAction::None,
                 ImeOptions::IME_FLAG_NO_FULLSCREEN,
             );
+        }
+    }
+
+    fn read_insets(&mut self) {
+        let Some(inset) = crate::android::insets() else {
+            return;
+        };
+        if inset != self.inset {
+            self.inset = inset;
+            self.resize_event();
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
         }
     }
 

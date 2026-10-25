@@ -17,6 +17,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 lean-sys = { git = "https://github.com/katzenpost/lean-sys", rev = "c6b51a80e302cba9a8cc0db4141d1ef2717d7b0e", default-features = false, features = ["mimalloc"] }
 softbuffer = "0.4"
 tiny-skia = "0.11"
+webbrowser = "1.2.5"
 winit = "0.30"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
@@ -24,8 +25,11 @@ arboard = { version = "3", features = ["wayland-data-control"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 accesskit_winit = { version = "0.29.2", features = ["accesskit_android"] }
+android_clipboard = "0.1"
+android_logger = "0.15"
 jni = "0.21"
 libc = "0.2"
+log = "0.4"
 winit = { version = "0.30", features = ["android-game-activity"] }
 
 [profile.release]

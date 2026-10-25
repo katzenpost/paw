@@ -9,11 +9,11 @@ OPENED=$WORK/opened.txt
 GALLERY=$PWD/.lake/build/bin/paw-gallery
 FAILED=0
 
-# Runs the gallery with the test hooks, and xdg-open replaced by a stub that records the link.
+# Runs the gallery with the test hooks, and as its browser a stub that records the link.
 start_gallery() {
   : > "$LOG"
   env PAW_TEST_LOG="$LOG" PAW_TEST_LAYOUT="$LAYOUT" PAW_E2E_OPENED="$OPENED" \
-    PATH="$PWD/tests/e2e/stubs:$PATH" "$GALLERY" &
+    BROWSER="$PWD/tests/e2e/stubs/browser" "$GALLERY" &
   GALLERY_PID=$!
 }
 

@@ -38,6 +38,8 @@ cargo install cargo-ndk
 rustup target add x86_64-linux-android aarch64-linux-android
 ```
 
+![The gallery on an Android phone emulator](docs/android.png)
+
 `make apk` builds the gallery as `.lake/android/paw-gallery-x86_64.apk`, for the emulator; `make apk ANDROID_ABI=arm64-v8a` builds it for phones. `make android-run` installs and starts it on the connected device, and `make e2e-android` drives it on an emulator. `android/build.sh` builds another app the same way; its header says how. It compiles Lean's runtime and the C of every Lean module the app imports with the NDK, and links them with the app's Rust into one library; the sources and Java libraries it fetches are pinned with their checksums in `android/deps.lock`.
 
 ## Try it

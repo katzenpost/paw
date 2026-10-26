@@ -161,13 +161,16 @@ add_modules() {
       if c=$(lake_c "$m"); then
         :
       else
+        # The toolchain's own modules; Lake's, which Mathlib's import graph tools import, sit in
+        # their own source root.
         case $m in
-          Init|Init.*|Std|Std.*|Lean|Lean.*) ;;
+          Init|Init.*|Std|Std.*|Lean|Lean.*) root=$LEAN_PREFIX/src/lean ;;
+          Lake|Lake.*) root=$LEAN_PREFIX/src/lean/lake ;;
           *) echo "no C for module $m" >&2; exit 1 ;;
         esac
         c=$stdc/$m.c
         if [ ! -f "$c" ]; then
-          (cd "$LEAN_PREFIX/src/lean" && lean --root=. -c "$c.tmp" "$(echo "$m" | tr . /).lean" >/dev/null)
+          (cd "$root" && lean --root=. -c "$c.tmp" "$(echo "$m" | tr . /).lean" >/dev/null)
           mv "$c.tmp" "$c"
         fi
       fi

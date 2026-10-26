@@ -105,10 +105,10 @@ def int : Format Int where
   roundtrip := by
     intro v
     by_cases h : v < 0
-    · simp only [h, if_true, parseNat_showNat, Option.bind_some]
-      rw [if_neg (by omega)]
+    · simp only [h, ite_true, parseNat_showNat, Option.bind_some]
+      rw [ite_eq_right (by omega)]
       simp; omega
-    · simp only [h, if_false]
+    · simp only [h, ite_false]
       have hd := showNat_digits v.toNat
       match hs : showNat v.toNat with
       | [] => exact absurd hs (showNat_ne_nil _)
@@ -246,12 +246,12 @@ def decimal (places : Nat) (hp : 1 ≤ places) : Format Int where
       rfl
     have hval : v.natAbs / 10 ^ places * 10 ^ places + v.natAbs % 10 ^ places = v.natAbs := Nat.div_add_mod' _ _
     by_cases h : v < 0
-    · simp only [h, if_true, List.cons_append, List.nil_append]
-      simp only [hnum, Option.bind_some, hlen, Nat.le_refl, if_true, parseNat_padTo, Nat.sub_self, Nat.pow_zero,
+    · simp only [h, ite_true, List.cons_append, List.nil_append]
+      simp only [hnum, Option.bind_some, hlen, Nat.le_refl, ite_true, parseNat_padTo, Nat.sub_self, Nat.pow_zero,
         Nat.mul_one, hval]
-      rw [if_neg (by omega)]
+      rw [ite_eq_right (by omega)]
       simp; omega
-    · simp only [h, if_false, List.nil_append]
+    · simp only [h, ite_false, List.nil_append]
       have hd := showNat_digits (v.natAbs / 10 ^ places)
       match hs : showNat (v.natAbs / 10 ^ places) with
       | [] => exact absurd hs (showNat_ne_nil _)
@@ -267,7 +267,7 @@ def decimal (places : Nat) (hp : 1 ≤ places) : Format Int where
             | _ => (false, showNat (v.natAbs / 10 ^ places) ++ '.' :: padTo places (showNat (v.natAbs % 10 ^ places)))) =
             (false, showNat (v.natAbs / 10 ^ places) ++ '.' :: padTo places (showNat (v.natAbs % 10 ^ places))) := by
           rw [hs]; simp [hc]
-        simp only [this, hnum, Option.bind_some, hlen, Nat.le_refl, if_true, parseNat_padTo, Nat.sub_self, Nat.pow_zero,
+        simp only [this, hnum, Option.bind_some, hlen, Nat.le_refl, ite_true, parseNat_padTo, Nat.sub_self, Nat.pow_zero,
           Nat.mul_one, hval]
         simp; omega
 

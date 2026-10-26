@@ -1,7 +1,7 @@
 # The sources and libraries an Android build fetches, each checked against its SHA-256.
 # name url sha256
-lean-4.33.1 https://github.com/leanprover/lean4/archive/refs/tags/v4.33.1.tar.gz 561b500da16419aec0baeba5dc47ad11979b5bdcd30a02aafc88c3eed599b766
-mimalloc-2.2.3 https://github.com/microsoft/mimalloc/archive/refs/tags/v2.2.3.tar.gz ac5ba94172b60823215a22b87ae923c5b05ef0cdd9047df2a832c16da02a6447
+lean-4.35.0 https://github.com/leanprover/lean4/archive/refs/tags/v4.35.0.tar.gz 6747b099d03d3675f2716e7cf5924a16bfbf75822b13a3d36f51f933ffcc307b
+mimalloc-3.4.5 https://github.com/microsoft/mimalloc/archive/refs/tags/v3.4.5.tar.gz 19a43af0645c57d348e729d5b31e23e912582911bb1047f795790834d3416221
 libuv-1.48.0 https://github.com/libuv/libuv/archive/refs/tags/v1.48.0.tar.gz 8c253adb0f800926a6cbd1c6576abae0bc8eb86a4f891049b72f9e5b7dc58f33
 
 # Java libraries, written by lock.py:

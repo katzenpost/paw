@@ -62,7 +62,8 @@ LEAN_INCLUDE=$LEAN_PREFIX/include
 
 WORK=$APP/.lake/android
 SRC=$WORK/src
-OUT=$WORK/$ABI
+# By Lean version, so that a runtime built for another is never reused.
+OUT=$WORK/$ABI/lean-$LEAN_VERSION
 mkdir -p "$SRC" "$OUT"
 
 say() { echo "== $*"; }
@@ -97,7 +98,7 @@ fetch() {
 # GMP or OpenSSL.
 lean_sources() {
   lean=$(fetch "lean-$LEAN_VERSION")
-  mimalloc=$(fetch mimalloc-2.2.3)
+  mimalloc=$(fetch mimalloc-3.4.5)
   uv=$(fetch libuv-1.48.0)
   mkdir -p "$OUT/rt"
   printf '#define LEAN_GITHASH "%s"\n' "$(cd "$APP" && lean --githash)" > "$OUT/rt/githash.h"
@@ -126,11 +127,15 @@ lean_runtime() {
   make -s -C "$OUT/uv" -j"$JOBS" uv_a >/dev/null
   cp "$OUT/uv/libuv.a" "$OUT/libuv.a"
   for f in "$lean"/src/runtime/*.cpp "$lean"/src/runtime/uv/*.cpp "$PAW/android/openssl_stub.cpp"; do
-    case $f in */runtime/openssl.cpp) continue ;; esac
+    case $f in */runtime/openssl.cpp | */runtime/mimalloc.cpp) continue ;; esac
     echo "$f"
   done | compile_cpp "$OUT/rt"
-  $CXX $CXX_FLAGS -DMI_SHARED_LIB -DMI_SHARED_LIB_EXPORT -DMI_SECURE=0 -I"$mimalloc/include" \
-    -Wno-unused-function -x c++ -c "$mimalloc/src/static.c" -o "$OUT/rt/mimalloc.o"
+  # All of mimalloc with the runtime's small-object allocator, which inlines its fast path, with
+  # the flags of Lean's src/runtime/CMakeLists.txt. Not its local-exec TLS: libmain.so is a shared
+  # library.
+  $CXX $CXX_FLAGS -DMI_SHARED_LIB -DMI_SHARED_LIB_EXPORT -DMI_WIN_NOREDIRECT -DMI_MAX_ALIGN_SIZE=8 \
+    -DMI_SECURE=0 -Wno-unused-function -I"$mimalloc/include" -I"$mimalloc/src" \
+    -c "$lean/src/runtime/mimalloc.cpp" -o "$OUT/rt/mimalloc.o"
   rm -f "$OUT/libleanrt.a"
   "$LLVM/llvm-ar" rcs "$OUT/libleanrt.a" "$OUT"/rt/*.o
 }

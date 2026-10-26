@@ -79,6 +79,12 @@ origin() {
     adb shell uiautomator dump /sdcard/paw-ui.xml > "$WORK/dump.txt" 2>&1
     adb exec-out cat /sdcard/paw-ui.xml > "$WORK/ui.xml" 2>/dev/null
     grep -q 'content-desc="Paw gallery"' "$WORK/ui.xml" && break
+    # A freshly booted emulator may put a system dialog over the gallery, or destroy its activity
+    # as it starts; then the gallery is brought back.
+    if ! adb shell dumpsys window | grep -q "mCurrentFocus=.*$PKG"; then
+      adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1
+      adb shell am start -n $ACTIVITY >/dev/null 2>&1
+    fi
     n=$((n + 1))
     if [ $n -gt 60 ]; then
       fail "the window is in Android's accessibility tree"

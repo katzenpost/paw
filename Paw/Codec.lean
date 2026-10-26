@@ -68,10 +68,10 @@ theorem nat_roundtrip (n : Nat) (rest : List UInt8) : decNat (encNat n ++ rest) 
     rw [encNat]
     split
     · simp only [List.singleton_append, decNat, UInt8.toNat_ofNat', Nat.reducePow]
-      rw [if_pos (by omega)]
+      rw [ite_eq_left (by omega)]
       simp only [Option.some.injEq, Prod.mk.injEq, and_true]; omega
     · simp only [List.cons_append, decNat, UInt8.toNat_ofNat', Nat.reducePow]
-      rw [if_neg (by omega), ih (n / 128) (by omega)]
+      rw [ite_eq_right (by omega), ih (n / 128) (by omega)]
       simp only [Option.some.injEq, Prod.mk.injEq, and_true]; omega
 
 def putNat (n : Nat) (b : ByteArray) : ByteArray :=

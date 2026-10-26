@@ -2,7 +2,7 @@ import Lake
 open Lake DSL System
 
 package paw where
-  version := v!"0.1.0"
+  version := v!"0.3.0"
   description := "An Elm-style GUI library for Lean, with security laws in its types"
   keywords := #["gui", "elm", "ui", "security"]
   license := "AGPL-3.0-only"
